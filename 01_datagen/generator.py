@@ -6,21 +6,42 @@
 
 职责
 ----
-按「基线 + 拐点 + 干预」三层模型，生成一套**自洽**的游戏运营数据。
+按字段清单生成一套**自洽**的游戏运营数据，从固定起点逐日向后累积。
 
-设计要点
+生成规则（全部来自 config.json，代码不写死任何业务数值）
+--------------------------------------------------------
+模块A 大盘
+  字段1 日期          起点固定，每日 +1 天
+  字段2 新增用户数     区间内随机（默认 300~1000）
+  字段3 活跃用户数     不随机。DAU = 非新增活跃 + 新增
+                      非新增活跃 = Σ(历史各日新增 × 该批用户在当日的留存率) + 初始存量
+                      首日非新增活跃起点由配置指定（默认 1000）
+  字段4 付费率         区间内随机（默认 7%~13%）
+  字段5 日流水         不随机。= Σ(各档付费用户数 × 该档 ARPPU)
+
+模块B 付费分层
+  付费用户数 = DAU × 付费率
+  各档付费用户数之和 = 付费用户数（用「最大余数法」取整，精确相等）
+  各档 ARPPU 在档位区间内随机
+  各档流水 = 付费用户数 × ARPPU，汇总即为日流水
+
+三条硬约束
+----------
+1. DAU ≡ 非新增活跃 + 新增               （数据库触发器强制）
+2. 各档付费用户数之和 ≡ 付费用户数        （生成后巡检 v_consistency）
+3. 各档流水之和 ≡ 日流水                  （生成后巡检 v_consistency）
+
+其他设计
 --------
-1. **自洽性**：付费分层的人数与流水必须严格加总回日粒度指标，不允许多算少算。
-2. **队列成熟度**：cohort_date + day_n > 最后一天时，存 NULL（表示"未成熟"）而不是 0——
-   这是手工抄日报时最容易出错的地方。
-3. **剧本化**：story_events 按「距结束天数」定位，首次运行固化成绝对日期落库，
-   之后每天增量生成时复用，保证剧情位置不会随日期推移而漂移。
-4. **可复现**：随机种子按「种子 + 日期」派生，任意一天的数据在任何时候重跑都一致。
+- 已生成的日期不会被改写。重复执行会自动跳过，只补缺失的天数。
+- 留存队列按「今天观测到的留存」写入：day_n 的留存值在 cohort_date + day_n 那天才落库，
+  未成熟的不写（而非写 0）。
+- 剧本层（story）可选：只影响留存曲线与付费结构分布，不改动已声明的随机区间。
 
 用法
 ----
-    python generator.py --days 180      # 首次：补齐 180 天历史
-    python generator.py                 # 日常：增量补到昨天
+    python generator.py                 # 首次：按配置天数生成；之后：增量补到最新
+    python generator.py --days 90       # 指定从起点起累计生成 90 天
     python generator.py --reset         # 清库重建
 """
 
@@ -28,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import sqlite3
 import sys
@@ -37,16 +59,11 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-# ---------------------------------------------------------------- 路径
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BASE_DIR.parent
 DB_PATH = ROOT_DIR / "data" / "game.db"
 SCHEMA_PATH = BASE_DIR / "schema.sql"
 CONFIG_PATH = BASE_DIR / "config.json"
-
-RETENTION_DAYS = [1, 3, 7, 14, 30, 60, 90]
-PAID_TIERS = ["小R", "中R", "大R"]
-ALL_TIERS = ["非R"] + PAID_TIERS
 
 
 # ================================================================
@@ -70,14 +87,9 @@ def build_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def rng_for(seed: int, d: date) -> random.Random:
-    """按日期派生随机流：任意一天的数据在任何时候重跑都完全一致。"""
-    return random.Random(f"{seed}:{d.isoformat()}")
-
-
-def jitter(rng: random.Random, amplitude: float) -> float:
-    """在 1 ± amplitude 区间内取随机扰动。"""
-    return rng.uniform(1.0 - amplitude, 1.0 + amplitude)
+def rng_for(seed: int, salt: str, d: date) -> random.Random:
+    """按「种子 + 用途 + 日期」派生随机流：任意一天的数据任何时候重跑都一致。"""
+    return random.Random(f"{seed}:{salt}:{d.isoformat()}")
 
 
 def cfg_get(conn: sqlite3.Connection, key: str, default=None):
@@ -94,215 +106,307 @@ def cfg_set(conn: sqlite3.Connection, key: str, value, note: str = "") -> None:
 
 
 # ================================================================
+# 留存曲线
+# ================================================================
+
+def build_retention_fn(cfg: dict):
+    """返回 r(day_n, mult_fn=None) —— 新增口径留存率。
+
+    锚点之间做对数插值（留存曲线的通行形态），超出最大锚点后几何衰减以保证长期收敛。
+    """
+    curve = cfg["retention_curve"]
+    anchors = sorted((int(k), float(v)) for k, v in curve["anchors"].items())
+    tail = float(curve.get("tail_decay", 0.98))
+
+    def base_rate(day_n: int) -> float:
+        if day_n <= 0:
+            return 1.0
+        if day_n <= anchors[0][0]:
+            return anchors[0][1]
+        if day_n >= anchors[-1][0]:
+            k0, r0 = anchors[-1]
+            return r0 * (tail ** (day_n - k0))
+        for (k1, r1), (k2, r2) in zip(anchors, anchors[1:]):
+            if k1 <= day_n <= k2:
+                if r1 <= 0 or r2 <= 0:
+                    return r1
+                b = math.log(r2 / r1) / math.log(k2 / k1)
+                return r1 * (day_n / k1) ** b
+        return anchors[-1][1]
+
+    def rate(day_n: int, mult_fn=None) -> float:
+        r = base_rate(day_n)
+        if mult_fn is not None:
+            r *= mult_fn(day_n)
+        return max(0.0, min(0.99, r))
+
+    return rate
+
+
+def make_mult_fn(mult_dict: dict | None):
+    """把「按日序号给出的系数表」变成可插值的函数。"""
+    if not mult_dict:
+        return lambda day_n: 1.0
+    pts = sorted((int(k), float(v)) for k, v in mult_dict.items())
+
+    def f(day_n: int) -> float:
+        if day_n <= pts[0][0]:
+            return pts[0][1]
+        if day_n >= pts[-1][0]:
+            return pts[-1][1]
+        for (k1, v1), (k2, v2) in zip(pts, pts[1:]):
+            if k1 <= day_n <= k2:
+                w = (day_n - k1) / (k2 - k1)
+                return v1 + (v2 - v1) * w
+        return 1.0
+
+    return f
+
+
+# ================================================================
 # 剧本事件
 # ================================================================
 
-def plan_events(cfg: dict, anchor_end: date) -> list[dict]:
-    """把配置里「距结束 N 天」的事件固化成绝对日期。"""
-    planned = []
-    for ev in cfg.get("story_events", []):
-        ev_date = anchor_end - timedelta(days=int(ev["day_from_end"]))
-        planned.append(
-            {
-                "event_id": ev["id"],
-                "date": ev_date.isoformat(),
-                "name": ev["name"],
-                "description": ev.get("description", ""),
-                "impact": ev.get("impact", {}),
-            }
-        )
-    planned.sort(key=lambda e: e["date"])
-    return planned
+def plan_events(cfg: dict, start: date) -> list[dict]:
+    """把配置里「第 N 天」的事件固化成绝对日期。"""
+    if not cfg.get("story", {}).get("enabled", False):
+        return []
+    out = []
+    for ev in cfg["story"].get("events", []):
+        d = start + timedelta(days=int(ev["day_index"]) - 1)
+        out.append({
+            "event_id": ev["id"],
+            "date": d.isoformat(),
+            "day_index": int(ev["day_index"]),
+            "name": ev["name"],
+            "description": ev.get("description", ""),
+            "impact": ev.get("impact", {}),
+        })
+    out.sort(key=lambda e: e["date"])
+    return out
 
 
 def save_events(conn: sqlite3.Connection, events: list[dict]) -> None:
     conn.executemany(
-        "INSERT OR REPLACE INTO story_events (event_id, event_date, name, description, impact) "
-        "VALUES (?, ?, ?, ?, ?)",
-        [
-            (
-                e["event_id"],
-                e["date"],
-                e["name"],
-                e["description"],
-                json.dumps(e["impact"], ensure_ascii=False),
-            )
-            for e in events
-        ],
+        "INSERT OR REPLACE INTO story_events "
+        "(event_id, event_date, day_index, name, description, impact) VALUES (?, ?, ?, ?, ?, ?)",
+        [(e["event_id"], e["date"], e["day_index"], e["name"],
+          e["description"], json.dumps(e["impact"], ensure_ascii=False)) for e in events],
     )
 
 
 def load_events(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        "SELECT event_id, event_date, name, description, impact FROM story_events ORDER BY event_date"
+        "SELECT event_id, event_date, day_index, name, description, impact "
+        "FROM story_events ORDER BY event_date"
     ).fetchall()
-    return [
-        {
-            "event_id": r[0],
-            "date": r[1],
-            "name": r[2],
-            "description": r[3],
-            "impact": json.loads(r[4]),
-        }
-        for r in rows
-    ]
+    return [{"event_id": r[0], "date": r[1], "day_index": r[2], "name": r[3],
+             "description": r[4], "impact": json.loads(r[5])} for r in rows]
+
+
+def cohort_retention_mult(cohort_date: date, events: list[dict]) -> dict:
+    """某队列当日生效的留存系数 = 该队列注册之前发生的所有事件的乘积。
+
+    用事件日期推导而非存快照——保证增量运行时结果与全量生成完全一致。
+    """
+    mult: dict[str, float] = {}
+    for ev in events:
+        if date.fromisoformat(ev["date"]) <= cohort_date:
+            for k, v in ev["impact"].get("retention_mult", {}).items():
+                mult[k] = mult.get(k, 1.0) * float(v)
+    return mult
 
 
 def apply_persistent_impact(state: dict, impact: dict) -> dict:
     """把事件里的持续型影响叠加到运行状态上（此后一直生效）。"""
     applied = {}
-
+    # 留存系数不改运行状态，而是由 cohort_retention_mult() 按队列注册日推导，
+    # 这里只做日志展示，让剧本执行过程可读。
     if "retention_mult" in impact:
-        for day_n, mult in impact["retention_mult"].items():
-            state["retention_mult"][day_n] = state["retention_mult"].get(day_n, 1.0) * float(mult)
         applied["留存系数"] = impact["retention_mult"]
-
-    for key, label in (
-        ("churn_mult", "日流失率"),
-        ("session_min_mult", "在线时长"),
-        ("pay_rate_mult", "付费率"),
-        ("arppu_mult", "ARPPU"),
-    ):
+    for key, label in (("tier_weight_mult", "档位权重"),):
         if key in impact:
-            state[key] = state.get(key, 1.0) * float(impact[key])
+            for code, mult in impact[key].items():
+                state.setdefault(key, {})[code] = state[key].get(code, 1.0) * float(mult)
             applied[label] = impact[key]
-
-    if "head_share_boost" in impact:
-        state["head_share_boost"] = state.get("head_share_boost", 0.0) + float(impact["head_share_boost"])
-        applied["头部集中度"] = f"+{impact['head_share_boost']:.0%}"
-
-    if "whale_lost" in impact:
-        state["whale_lost"] = state.get("whale_lost", 0) + int(impact["whale_lost"])
-        applied["流失大R"] = f"{impact['whale_lost']} 人"
-
+    if "tier_user_delta" in impact:
+        for code, delta in impact["tier_user_delta"].items():
+            state.setdefault("tier_user_delta", {})[code] = (
+                state["tier_user_delta"].get(code, 0) + int(delta)
+            )
+        applied["档位人数偏移"] = impact["tier_user_delta"]
     return applied
 
 
 # ================================================================
-# 日粒度指标 + 付费分层
+# 生成核心
 # ================================================================
 
-def gen_day(d: date, state: dict, cfg: dict, one_shot: dict) -> tuple[dict, list[tuple]]:
-    """生成一天的全部数据。返回 (日指标行, 分层行列表)。"""
-    base = cfg["baseline"]
-    rng = rng_for(cfg["sim"]["seed"], d)
-    noise = cfg["sim"]["noise"]
+def allocate_users(total: int, weights: list[float]) -> list[int]:
+    """最大余数法：把 total 精确分配到各档，保证和严格等于 total。"""
+    s = sum(weights)
+    if s <= 0 or total <= 0:
+        return [0] * len(weights)
+    exact = [total * w / s for w in weights]
+    floors = [int(x) for x in exact]
+    remainder = total - sum(floors)
+    order = sorted(range(len(exact)), key=lambda i: exact[i] - floors[i], reverse=True)
+    for i in order[:remainder]:
+        floors[i] += 1
+    return floors
+
+
+def sample_field(field_cfg: dict, prev, rng: random.Random, is_weekend: bool) -> float:
+    """在 field_cfg['range'] 闭区间内取值，结果**永不越界**。
+
+    - mean_revert > 0 时走「区间内均值回复游走」：数值仍落在区间内，但日间不会大幅跳变，
+      更贴近真实运营指标的连续性。设为 0 即退化为每日独立均匀随机。
+    - weekend_high_bias 把周末值推向区间上半段，而不是乘到区间外。
+    """
+    lo, hi = field_cfg["range"]
+    span = float(hi) - float(lo)
+    target = (float(lo) + float(hi)) / 2.0
+    mr = float(field_cfg.get("mean_revert", 0.0))
+
+    if prev is None or mr <= 0:
+        val = lo + span * rng.uniform(0.0, 1.0)
+    else:
+        shock = rng.uniform(-1.0, 1.0) * span * float(field_cfg.get("shock_scale", 0.4))
+        val = prev + (target - prev) * mr + shock
+
+    if is_weekend and field_cfg.get("weekend_high_bias", False):
+        val = val + (hi - val) * 0.35
+
+    # 边界用「反射」而非硬截断，避免取值在区间端点堆积（否则会出现连续多天正好等于上限）
+    for _ in range(3):
+        if val > hi:
+            val = hi - (val - hi)
+        elif val < lo:
+            val = lo + (lo - val)
+        else:
+            break
+
+    return min(max(val, float(lo)), float(hi))
+
+
+def gen_day(d: date, first: date, state: dict, cfg: dict, events: list[dict],
+            history: list[tuple[date, int]], rate_fn) -> tuple[dict, list[dict]]:
+    """生成一天的模块A + 模块B 数据。"""
+    ma, mb = cfg["module_a"], cfg["module_b"]
+    seed, noise = cfg["sim"]["seed"], cfg["sim"]["noise"]
     is_weekend = d.weekday() >= 5
 
-    # ---- 新增 / 回流 ----
-    new_users = base["new_users_base"]
-    if is_weekend:
-        new_users *= base["weekend_new_mult"]
-    new_users = max(1, int(round(new_users * jitter(rng, noise))))
+    # ---------- 字段2：新增用户数（区间内随机，严格不越界） ----------
+    f2 = ma["field2_new_users"]
+    prev = state.get("_prev", {})
+    rng_nu = rng_for(seed, "new_users", d)
+    new_users = max(1, int(round(sample_field(f2, prev.get("new_users"), rng_nu, is_weekend))))
 
-    returning = max(0, int(round(base["returning_base"] * jitter(rng, noise * 1.5))))
+    # ---------- 字段3：DAU = 非新增活跃 + 新增（不随机） ----------
+    stock = 0.0
+    weight_cache: dict[str, dict] = {}
+    for c_date, c_new in history:                      # 历史各日新增的存活贡献
+        day_n = (d - c_date).days
+        if day_n <= 0:
+            continue
+        key = c_date.isoformat()
+        if key not in weight_cache:
+            weight_cache[key] = cohort_retention_mult(c_date, events)
+        stock += c_new * rate_fn(day_n, make_mult_fn(weight_cache[key]))
 
-    # ---- DAU：存量衰减 + 新增 + 回流 ----
-    churn = base["daily_churn"] * state["churn_mult"]
-    if is_weekend:                       # 周末流失更低，自然形成 DAU 波峰
-        churn /= 1.06
-    prev_dau = state["dau"]
-    dau = prev_dau * (1 - churn) + new_users + returning
-    if "dau_shock" in one_shot:          # 剧本的一次性冲击
-        dau *= (1 + one_shot["dau_shock"])
-    dau = max(1, int(round(dau)))
+    # 初始存量：等价于一个「虚拟队列」，使其在首日贡献恰为 stock_active_start
+    stock0 = ma["field3_dau"]["stock_active_start"]
+    day_from_start = (d - first).days + 1
+    stock += (stock0 / rate_fn(1)) * rate_fn(day_from_start)
 
-    # ---- 付费 ----
-    pay_rate = base["pay_rate"] * state["pay_rate_mult"]
-    if is_weekend:
-        pay_rate *= base["weekend_pay_mult"]
-    pay_rate *= jitter(rng, noise * 0.8)
+    stock_active = int(round(stock))
+    dau = stock_active + new_users
+
+    # ---------- 字段4：付费率（区间内随机，严格不越界） ----------
+    f4 = ma["field4_pay_rate"]
+    rng_pr = rng_for(seed, "pay_rate", d)
+    pay_rate = sample_field(f4, prev.get("pay_rate"), rng_pr, is_weekend)
+
+    # ---------- 模块B：付费用户数 ----------
     pay_users = max(1, int(round(dau * pay_rate)))
 
-    arppu = base["arppu"] * state["arppu_mult"] * jitter(rng, noise * 1.2)
-    revenue = pay_users * arppu
-    if "revenue_shock" in one_shot:
-        revenue *= (1 + one_shot["revenue_shock"])
+    # ---------- 模块B：各档位分配 ----------
+    tiers_cfg = mb["tiers"]
+    rng_t = rng_for(seed, "tiers", d)
+    weights, ranges, metas = [], [], []
+    for t in tiers_cfg:
+        w = float(t["user_weight"]) * state.get("tier_weight_mult", {}).get(t["code"], 1.0)
+        weights.append(w * rng_t.uniform(1 - noise, 1 + noise))
+        ranges.append(t["arppu_range"])
+        metas.append(t)
 
-    # ---- 人均时长：按自然日复利衰减，再叠加剧本系数 ----
-    days_in = (d - date.fromisoformat(state["plan_start"])).days
-    session = (
-        base["session_min"]
-        * state["session_min_mult"]
-        * (1 + base["session_min_decay"]) ** days_in
-        * jitter(rng, noise * 0.5)
-    )
+    alloc = allocate_users(pay_users, weights)
 
-    daily = {
-        "date": d.isoformat(),
-        "new_users": new_users,
-        "dau": dau,
-        "returning_users": returning,
-        "pay_users": pay_users,
-        "revenue": round(revenue, 2),
-        "avg_session_min": round(session, 1),
-    }
-
-    # ---- 付费分层：人数与流水必须严格加总回总量 ----
-    tiers = build_tiers(d, dau, pay_users, daily["revenue"], state, cfg, rng, noise)
-    return daily, tiers
-
-
-def build_tiers(d, dau, pay_users, revenue, state, cfg, rng, noise) -> list[tuple]:
-    """构造付费分层。采用「先定大R/中R，小R取差额」的方式保证加总严格相等。"""
-    shares = cfg["tiers"]["paid_user_share"]
-
-    big_r = max(0, int(round(pay_users * shares["大R"])) - state.get("whale_lost", 0))
-    mid_r = int(round(pay_users * shares["中R"]))
-    mid_r = min(mid_r, max(0, pay_users - big_r))
-    small_r = max(0, pay_users - big_r - mid_r)
-
-    # 流水占比：从 start 线性漂移到 end，再叠加「头部集中度」加成
-    plan_start = date.fromisoformat(state["plan_start"])
-    span = max(1, (date.fromisoformat(state["plan_end"]) - plan_start).days)
-    progress = min(1.0, max(0.0, (d - plan_start).days / span))
-
-    rs_start, rs_end = cfg["tiers"]["revenue_share_start"], cfg["tiers"]["revenue_share_end"]
-    share = {
-        t: rs_start[t] + (rs_end[t] - rs_start[t]) * progress
-        for t in PAID_TIERS
-    }
-    share["大R"] += state.get("head_share_boost", 0.0)
-    total = sum(share.values())
-    share = {t: v / total for t, v in share.items()}
-
-    rev_big = revenue * share["大R"]
-    rev_mid = revenue * share["中R"]
-    rev_small = max(0.0, revenue - rev_big - rev_mid)   # 差额保证加总相等
-
-    non_r = max(0, dau - pay_users)
-
-    return [
-        (d.isoformat(), "非R", non_r, 0.0),
-        (d.isoformat(), "小R", small_r, round(rev_small, 2)),
-        (d.isoformat(), "中R", mid_r, round(rev_mid, 2)),
-        (d.isoformat(), "大R", big_r, round(rev_big, 2)),
-    ]
-
-
-# ================================================================
-# 留存队列
-# ================================================================
-
-def gen_cohorts(cohort: date, cohort_new_users: int, retention_mult: dict,
-                last_date: date, cfg: dict) -> list[tuple]:
-    """为一个注册队列生成各档留存；未成熟的档位存 NULL。"""
-    rng = rng_for(cfg["sim"]["seed"] + 7, cohort)
-    noise = cfg["sim"]["noise"] * 0.5
-    rows = []
-
-    for day_n in RETENTION_DAYS:
-        observe_on = cohort + timedelta(days=day_n)
-        if observe_on > last_date:
-            rows.append((cohort.isoformat(), day_n, None, None))   # 队列未成熟
+    # 剧本的人数偏移（例如头部用户流失）——从对应档位扣减，差额补给相邻档，保持总数不变
+    for code, delta in state.get("tier_user_delta", {}).items():
+        idx = next((i for i, t in enumerate(tiers_cfg) if t["code"] == code), None)
+        if idx is None or delta == 0:
             continue
+        move = min(alloc[idx], -delta) if delta < 0 else 0
+        if move:
+            alloc[idx] -= move
+            donor = idx - 1 if idx > 0 else min(idx + 1, len(alloc) - 1)
+            alloc[donor] += move
 
-        base_rate = cfg["retention_curve"][str(day_n)]
-        mult = retention_mult.get(str(day_n), 1.0)
-        rate = min(0.98, base_rate * mult * jitter(rng, noise))
-        rows.append((cohort.isoformat(), day_n, int(round(cohort_new_users * rate)), round(rate, 6)))
+    rows = []
+    total_rev = 0.0
+    a_noise = float(mb.get("arppu_noise", 1.0))
+    # 一次性流水冲击按比例作用于各档 ARPPU —— 这样分层之和仍严格等于日流水
+    shock = float(state.get("_one_shot", {}).get("revenue_shock", 0.0))
+    for i, t in enumerate(metas):
+        lo, hi = ranges[i]
+        # ARPPU 基准取区间几何中位数，日波动幅度由 arppu_noise 控制，并截断在区间内。
+        # 这样档位人均不会天天翻倍，符合真实付费行为的连续性。
+        base = math.sqrt(max(lo, 1e-6) * hi) if hi > 0 else max(lo, 1.0)
+        users = alloc[i]
+        if users == 0:
+            arppu = 0.0
+        else:
+            arppu = round(min(max(base * rng_t.uniform(1 - a_noise, 1 + a_noise), lo), hi) * (1 + shock), 2)
+        revenue = round(users * arppu, 2)
+        total_rev += revenue
+        rows.append({
+            "date": d.isoformat(), "tier_code": t["code"], "tier_name": t["name"],
+            "tier_min": t.get("min"), "tier_max": t.get("max"), "sort_order": i + 1,
+            "users": users, "arppu": arppu, "revenue": revenue,
+        })
 
-    return rows
+    # ---------- 字段5：日流水（由分层汇总，不随机） ----------
+    daily = {
+        "date": d.isoformat(), "new_users": new_users, "stock_active": stock_active,
+        "dau": dau, "pay_rate": round(pay_rate, 6), "pay_users": pay_users,
+        "revenue": round(total_rev, 2), "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    return daily, rows
+
+
+def gen_cohort_observation(d: date, first: date, history: list[tuple[date, int]],
+                           observe_days: list[int], events: list[dict], rate_fn,
+                           cfg: dict) -> list[tuple]:
+    """写入「今天观测到的留存」：cohort + day_n == 今天 的那些档位。
+
+    未成熟的档位不落库（而不是记 0）——队列成熟度是留存数据的固有特性。
+    """
+    seed = cfg["sim"]["seed"]
+    out = []
+    for day_n in observe_days:
+        cohort = d - timedelta(days=day_n)
+        if cohort < first:
+            continue
+        c_new = next((n for c, n in history if c == cohort), None)
+        if c_new is None:
+            continue
+        mult_fn = make_mult_fn(cohort_retention_mult(cohort, events))
+        rng = rng_for(seed + 7, "retention", cohort)
+        base_r = rate_fn(day_n, mult_fn)
+        rate = max(0.0, min(0.98, base_r * rng.uniform(1 - 0.05, 1 + 0.05)))
+        out.append((cohort.isoformat(), day_n, int(round(c_new * rate)), round(rate, 6)))
+    return out
 
 
 # ================================================================
@@ -311,14 +415,16 @@ def gen_cohorts(cohort: date, cohort_new_users: int, retention_mult: dict,
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="游戏运营数据生成器")
-    ap.add_argument("--days", type=int, default=None, help="首次生成的总天数（默认取配置）")
-    ap.add_argument("--end-date", type=str, default=None, help="结束日期 YYYY-MM-DD（默认今天）")
+    ap.add_argument("--days", type=int, default=None, help="从起点起累计生成的天数")
     ap.add_argument("--reset", action="store_true", help="清库重建")
     ap.add_argument("--config", type=str, default=str(CONFIG_PATH))
     args = ap.parse_args()
 
     cfg = load_config(Path(args.config))
-    end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
+    first = date.fromisoformat(cfg["sim"]["start_date"])
+    today = date.today()
+    observe_days = cfg["retention_curve"].get("cohort_observe_days", [1, 3, 7, 14, 30, 60, 90])
+    rate_fn = build_retention_fn(cfg)
 
     if args.reset and DB_PATH.exists():
         DB_PATH.unlink()
@@ -330,121 +436,120 @@ def main() -> int:
     if fresh:
         build_schema(conn)
 
-    # ---- 首次运行：规划剧本并固化日期 ----
+    # ---------- 剧本：首次固化为绝对日期，之后复用，保证剧情位置不漂移 ----------
     if fresh:
-        total_days = args.days or cfg["sim"]["days"]
-        plan_start = end_date - timedelta(days=total_days - 1)
-        plan_end = end_date
-        events = plan_events(cfg, plan_end)
+        events = plan_events(cfg, first)
         save_events(conn, events)
-        cfg_set(conn, "plan_start", plan_start.isoformat(), "剧本起始日期")
-        cfg_set(conn, "plan_end", plan_end.isoformat(), "剧本结束日期")
         cfg_set(conn, "config_snapshot", cfg, "生成时的完整配置留档")
-        print(f"[初始化] 剧本区间 {plan_start} → {plan_end}（{total_days} 天）")
+        cfg_set(conn, "start_date", first.isoformat(), "数据起点（固定，不随运行日期变化）")
+        print(f"[初始化] 起点 {first}　数据将由该日向后逐日累积")
+        if events:
+            print(f"[剧本] 已固化 {len(events)} 个事件")
     else:
         events = load_events(conn)
-        plan_start = date.fromisoformat(cfg_get(conn, "plan_start"))
-        plan_end = date.fromisoformat(cfg_get(conn, "plan_end"))
+        first = date.fromisoformat(cfg_get(conn, "start_date", first.isoformat()))
+        cfg_set(conn, "config_snapshot", cfg, "生成时的完整配置留档")
 
-    # ---- 计算本次要生成的日期 ----
+    # ---------- 决定本次生成哪些日期 ----------
     row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
     last_in_db = date.fromisoformat(row[0]) if row and row[0] else None
 
     if last_in_db is None:
-        todo = [plan_start + timedelta(days=i) for i in range((plan_end - plan_start).days + 1)]
+        total = args.days or cfg["sim"]["days"]
+        todo = [first + timedelta(days=i) for i in range(total)]
     else:
+        end_target = today if args.days is None else max(
+            today, first + timedelta(days=args.days - 1)
+        )
         todo = [last_in_db + timedelta(days=i)
-                for i in range(1, (end_date - last_in_db).days + 1)]
+                for i in range(1, (end_target - last_in_db).days + 1)]
 
     if not todo:
         print(f"[跳过] 数据已是最新（最后一天 {last_in_db}），无需生成。")
         conn.close()
         return 0
 
-    # ---- 恢复运行状态 ----
+    # ---------- 载入历史新增（非新增活跃池的推导依据） ----------
+    hist_rows = conn.execute("SELECT date, new_users FROM daily_metrics ORDER BY date").fetchall()
+    history: list[tuple[date, int]] = [(date.fromisoformat(r[0]), r[1]) for r in hist_rows]
+
     state = {
-        "dau": cfg["baseline"]["dau_start"],
+        "tier_weight_mult": {},
+        "tier_user_delta": {},
         "retention_mult": {},
-        "churn_mult": 1.0,
-        "session_min_mult": 1.0,
-        "pay_rate_mult": 1.0,
-        "arppu_mult": 1.0,
-        "head_share_boost": 0.0,
-        "whale_lost": 0,
-        "plan_start": plan_start.isoformat(),
-        "plan_end": plan_end.isoformat(),
     }
     saved = cfg_get(conn, "runtime_state")
     if saved:
         state.update(saved)
 
-    # 增量场景：先重放「上一次生成之后、本次开始之前」的事件，恢复累计系数
+    # 增量场景：从库里取最后一天的取值，保证「均值回复」在跨次运行时连续
+    prev_row = conn.execute(
+        "SELECT new_users, pay_rate FROM daily_metrics ORDER BY date DESC LIMIT 1").fetchone()
+    if prev_row:
+        state["_prev"] = {"new_users": prev_row[0], "pay_rate": prev_row[1]}
+
+    # 增量场景：补上「上次生成之后、本次开始之前」发生的事件影响
     if last_in_db is not None:
         for ev in events:
             ev_d = date.fromisoformat(ev["date"])
             if last_in_db < ev_d <= todo[0]:
                 apply_persistent_impact(state, ev["impact"])
 
-    events_by_date = {}
+    events_by_date: dict[str, list[dict]] = {}
     for ev in events:
         events_by_date.setdefault(ev["date"], []).append(ev)
 
-    # ---- 逐日生成 ----
+    # ---------- 逐日生成 ----------
     daily_rows, tier_rows, cohort_rows, event_log = [], [], [], []
     for d in todo:
-        one_shot = {}
-
         for ev in events_by_date.get(d.isoformat(), []):
             applied = apply_persistent_impact(state, ev["impact"])
-            for k in ("dau_shock", "revenue_shock"):
-                if k in ev["impact"]:
-                    one_shot[k] = ev["impact"][k]
+            state["_one_shot"] = {"revenue_shock": ev["impact"]["revenue_shock"]} \
+                if "revenue_shock" in ev["impact"] else {}
             event_log.append((d, ev["name"], applied))
+        state.setdefault("_one_shot", {})
 
-        daily, tiers = gen_day(d, state, cfg, one_shot)
-        state["dau"] = daily["dau"]                      # 传递到下一天
-
-        daily_rows.append((
-            daily["date"], daily["new_users"], daily["dau"], daily["returning_users"],
-            daily["pay_users"], daily["revenue"], daily["avg_session_min"],
-            datetime.now().isoformat(timespec="seconds"),
-        ))
-        tier_rows.extend(tiers)
-
-        # 队列留存：用「注册当天生效的留存系数」快照
+        daily, tiers = gen_day(d, first, state, cfg, events, history, rate_fn)
+        daily_rows.append(tuple(daily[k] for k in (
+            "date", "new_users", "stock_active", "dau",
+            "pay_rate", "pay_users", "revenue", "created_at")))
+        tier_rows.extend([
+            (t["date"], t["tier_code"], t["tier_name"], t["tier_min"], t["tier_max"],
+             t["sort_order"], t["users"], t["arppu"], t["revenue"]) for t in tiers
+        ])
         cohort_rows.extend(
-            gen_cohorts(d, daily["new_users"], dict(state["retention_mult"]), end_date, cfg)
-        )
+            gen_cohort_observation(d, first, history, observe_days, events, rate_fn, cfg))
+        history.append((d, daily["new_users"]))
+        # 供下一天的均值回复取值使用
+        state["_prev"] = {"new_users": daily["new_users"], "pay_rate": daily["pay_rate"]}
+        state["_one_shot"] = {}
 
-    # ---- 落库 ----
+    # ---------- 落库 ----------
     with conn:
         conn.executemany(
             "INSERT OR REPLACE INTO daily_metrics "
-            "(date, new_users, dau, returning_users, pay_users, revenue, avg_session_min, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            daily_rows,
-        )
+            "(date, new_users, stock_active, dau, pay_rate, pay_users, revenue, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", daily_rows)
         conn.executemany(
-            "INSERT OR REPLACE INTO revenue_tiers (date, tier, users, revenue) VALUES (?, ?, ?, ?)",
-            tier_rows,
-        )
+            "INSERT OR REPLACE INTO revenue_tiers "
+            "(date, tier_code, tier_name, tier_min, tier_max, sort_order, users, arppu, revenue) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", tier_rows)
         conn.executemany(
             "INSERT OR REPLACE INTO retention_cohorts (cohort_date, day_n, retained, rate) "
-            "VALUES (?, ?, ?, ?)",
-            cohort_rows,
-        )
+            "VALUES (?, ?, ?, ?)", cohort_rows)
         cfg_set(conn, "runtime_state", state, "运行状态快照（保证增量生成可续跑）")
-        for key, value, note in (
-            ("last_run", datetime.now().isoformat(timespec="seconds"), "上次生成时间"),
-            ("total_days", (plan_end - plan_start).days + 1, "剧本总天数"),
-        ):
-            cfg_set(conn, key, value, note)
+        cfg_set(conn, "last_run", datetime.now().isoformat(timespec="seconds"), "上次生成时间")
+        cfg_set(conn, "total_days_planned", (first + timedelta(days=(cfg["sim"]["days"] - 1))).isoformat(),
+                "计划生成到的日期")
 
-    # ---- 输出摘要 ----
+    # ---------- 摘要 ----------
+    future = [d for d in todo if d > today]
     print(f"\n[生成] {cfg['game']['name']} · {todo[0]} → {todo[-1]}（{len(todo)} 天）")
     print(f"  daily_metrics      {len(daily_rows):>6} 行")
-    print(f"  retention_cohorts  {len(cohort_rows):>6} 行")
     print(f"  revenue_tiers      {len(tier_rows):>6} 行")
+    print(f"  retention_cohorts  {len(cohort_rows):>6} 行")
+    if future:
+        print(f"  ⚠ 其中 {len(future)} 天日期晚于今天，属推演数据（{future[0]} → {future[-1]}）")
 
     if event_log:
         print("\n[剧本事件]")
@@ -453,27 +558,16 @@ def main() -> int:
             print(f"  · {d}  {name}  →  {detail}")
 
     stat = conn.execute(
-        "SELECT COUNT(*), MIN(date), MAX(date), ROUND(AVG(dau)), ROUND(AVG(revenue)) FROM daily_metrics"
-    ).fetchone()
-    print(f"\n[库概况] {stat[0]} 天（{stat[1]} → {stat[2]}）  平均 DAU {stat[3]:,}  平均日流水 ¥{stat[4]:,.0f}")
+        "SELECT COUNT(*), MIN(date), MAX(date), ROUND(AVG(dau)), ROUND(AVG(revenue)) "
+        "FROM daily_metrics").fetchone()
+    print(f"\n[库概况] {stat[0]} 天（{stat[1]} → {stat[2]}）　"
+          f"平均 DAU {stat[3]:,.0f}　平均日流水 ¥{stat[4]:,.0f}")
 
-    # 自洽性校验
-    bad = conn.execute("""
-        SELECT COUNT(*) FROM (
-            SELECT t.date,
-                   SUM(t.users)            AS tier_users,
-                   SUM(t.revenue)          AS tier_rev,
-                   m.dau, m.revenue        AS day_rev
-            FROM revenue_tiers t JOIN daily_metrics m ON m.date = t.date
-            GROUP BY t.date
-            HAVING tier_users <> m.dau OR ABS(tier_rev - day_rev) > 0.05
-        )
-    """).fetchone()[0]
-    print(f"[自洽校验] 分层人数/流水与总量不一致的天数：{bad} 天" + ("  ✅ 全部通过" if bad == 0 else "  ❌ 需检查"))
+    bad = conn.execute("SELECT COUNT(*) FROM v_consistency").fetchone()[0]
+    print(f"[一致性巡检] 异常 {bad} 天" + ("　✅ 全部通过" if bad == 0 else "　❌ 请检查 v_consistency"))
 
     size_kb = DB_PATH.stat().st_size / 1024
     print(f"[完成] 数据库：{DB_PATH.relative_to(ROOT_DIR)}（{size_kb:,.0f} KB）")
-
     conn.close()
     return 0
 

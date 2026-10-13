@@ -2,17 +2,23 @@
 -- 游戏运营数据闭环系统 · 数据库结构
 -- 唯一数据源：data/game.db  （SQLite）
 --
--- 设计原则
---   1. 分层建模：日粒度指标 / 留存队列 / 付费分层 三张事实表 + 活动两张表
---   2. 可追溯：剧本事件单独落库，看板能标注曲线上的拐点
---   3. 派生指标用视图算，不冗余存储，避免口径不一致
+-- 结构对应字段清单：
+--   模块A 大盘数据     → daily_metrics
+--   模块B 付费分层数据  → revenue_tiers
+--   DAU 的推导依据      → retention_cohorts
+--
+-- 扩展原则：所有档位、区间、边界全部来自 config.json，不写死在 SQL 里。
+--          新增层级只需改配置，无需动表结构。
 -- ============================================================
 
 PRAGMA foreign_keys = ON;
 
-DROP VIEW  IF EXISTS v_daily_kpi;
-DROP VIEW  IF EXISTS v_tier_daily;
+DROP VIEW  IF EXISTS v_consistency;
 DROP VIEW  IF EXISTS v_retention_pivot;
+DROP VIEW  IF EXISTS v_tier_daily;
+DROP VIEW  IF EXISTS v_daily_kpi;
+
+DROP TRIGGER IF EXISTS trg_dau_consistency;
 
 DROP TABLE IF EXISTS activity_effects;
 DROP TABLE IF EXISTS activities;
@@ -24,29 +30,67 @@ DROP TABLE IF EXISTS sim_config;
 
 
 -- ------------------------------------------------------------
--- 1. 日粒度指标表 · 对应运营日报主表
+-- 模块A · 大盘数据
+--   date          字段1  日期
+--   new_users     字段2  每日新增用户数
+--   stock_active  字段3  每日非新增活跃用户数（由历史新增 + 留存推导）
+--   dau           字段3  每日活跃用户数 = stock_active + new_users
+--   pay_rate      字段4  每日付费率
+--   pay_users     字段5  付费用户数 = dau × pay_rate（模块B字段2）
+--   revenue       字段5  每日流水（由付费分层汇总得出）
 -- ------------------------------------------------------------
 CREATE TABLE daily_metrics (
-    date              TEXT    PRIMARY KEY,          -- 日期 YYYY-MM-DD
-    new_users         INTEGER NOT NULL,             -- 新增用户数
-    dau               INTEGER NOT NULL,             -- 活跃用户数 DAU
-    returning_users   INTEGER NOT NULL,             -- 回流用户数
-    pay_users         INTEGER NOT NULL,             -- 当日付费用户数
-    revenue           REAL    NOT NULL,             -- 当日充值总金额(元)
-    avg_session_min   REAL    NOT NULL,             -- 人均在线时长(分钟)
-    created_at        TEXT    NOT NULL              -- 入库时间
+    date          TEXT    PRIMARY KEY,        -- YYYY-MM-DD
+    new_users     INTEGER NOT NULL,
+    stock_active  INTEGER NOT NULL,
+    dau           INTEGER NOT NULL,
+    pay_rate      REAL    NOT NULL,
+    pay_users     INTEGER NOT NULL,
+    revenue       REAL    NOT NULL,
+    created_at    TEXT    NOT NULL
 );
 
+-- 硬约束：DAU 必须严格等于 非新增活跃 + 新增
+CREATE TRIGGER trg_dau_consistency
+BEFORE INSERT ON daily_metrics
+FOR EACH ROW
+WHEN NEW.dau <> NEW.stock_active + NEW.new_users
+BEGIN
+    SELECT RAISE(ABORT, 'DAU 必须等于 非新增活跃 + 新增用户数');
+END;
+
 
 -- ------------------------------------------------------------
--- 2. 留存队列表 · 对应日报里 "44(17.33%)" 这种列
---    retained / rate 为 NULL 表示「队列尚未成熟」，不是 0
+-- 模块B · 付费分层数据（长表结构，档位数量不限）
+--   字段3~12 = N 个档位 × (付费用户数, ARPPU)
+--   约束：同一 date 下 SUM(users)                  = daily_metrics.pay_users
+--        同一 date 下 SUM(users × arppu)          = daily_metrics.revenue
+-- ------------------------------------------------------------
+CREATE TABLE revenue_tiers (
+    date       TEXT    NOT NULL,
+    tier_code  TEXT    NOT NULL,              -- 档位代号，如 L1
+    tier_name  TEXT    NOT NULL,              -- 档位名称，如 "0-10元"
+    tier_min   REAL,                          -- 区间下界
+    tier_max   REAL,                          -- 区间上界（NULL = 无上限）
+    sort_order INTEGER NOT NULL,              -- 展示排序
+    users      INTEGER NOT NULL,              -- 该档付费用户数
+    arppu      REAL    NOT NULL,              -- 该档 ARPPU
+    revenue    REAL    NOT NULL,              -- 该档流水 = users × arppu
+    PRIMARY KEY (date, tier_code)
+);
+
+CREATE INDEX idx_tier_date ON revenue_tiers (date, sort_order);
+
+
+-- ------------------------------------------------------------
+-- 留存队列 · DAU 的推导依据，同时供诊断使用
+--   retained / rate 为 NULL 表示「队列尚未成熟」，不是 0
 -- ------------------------------------------------------------
 CREATE TABLE retention_cohorts (
-    cohort_date   TEXT    NOT NULL,                 -- 注册日期(队列)
-    day_n         INTEGER NOT NULL,                 -- 第 N 日留存
-    retained      INTEGER,                          -- 留存人数(NULL=未成熟)
-    rate          REAL,                             -- 留存率  (NULL=未成熟)
+    cohort_date   TEXT    NOT NULL,
+    day_n         INTEGER NOT NULL,
+    retained      INTEGER,
+    rate          REAL,
     PRIMARY KEY (cohort_date, day_n)
 );
 
@@ -54,69 +98,56 @@ CREATE INDEX idx_cohort_day ON retention_cohorts (day_n, cohort_date);
 
 
 -- ------------------------------------------------------------
--- 3. 付费分层表 · 变现盘结构诊断
---    约束：同一 date 下各层 users 之和 = 日付费用户数(含非R则 = DAU)
---          同一 date 下各层 revenue 之和 = 日充值总额
--- ------------------------------------------------------------
-CREATE TABLE revenue_tiers (
-    date       TEXT    NOT NULL,
-    tier       TEXT    NOT NULL,                    -- 非R / 小R / 中R / 大R
-    users      INTEGER NOT NULL,                    -- 该层人数
-    revenue    REAL    NOT NULL,                    -- 该层流水(元)
-    PRIMARY KEY (date, tier)
-);
-
-
--- ------------------------------------------------------------
--- 4. 活动表 · 模块③ 活动 Agent 的产出
+-- 活动表 · 模块③ 活动 Agent 的产出
 -- ------------------------------------------------------------
 CREATE TABLE activities (
-    activity_id     TEXT PRIMARY KEY,               -- 活动编号
-    name            TEXT NOT NULL,                  -- 活动名称
-    category        TEXT NOT NULL,                  -- 商城/礼包/权益/抽奖/任务/排行榜/特殊
-    form            TEXT NOT NULL,                  -- 具体形式
+    activity_id     TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    form            TEXT NOT NULL,
     start_date      TEXT NOT NULL,
     end_date        TEXT,
-    target_tier     TEXT,                           -- 主投人群
-    target_metric   TEXT,                           -- 目标指标
-    expected_lift   REAL,                           -- 预期提升幅度(0.15 = +15%)
-    status          TEXT NOT NULL,                  -- planned / running / finished
-    rationale       TEXT                            -- 缺口归因(为什么要上这个)
+    target_tier     TEXT,
+    target_metric   TEXT,
+    expected_lift   REAL,
+    status          TEXT NOT NULL,
+    rationale       TEXT
 );
 
 CREATE INDEX idx_act_date ON activities (start_date, end_date);
 
 
 -- ------------------------------------------------------------
--- 5. 活动效果回流表 · 活动是否真的起作用，用数据说话
+-- 活动效果回流表 · 活动到底有没有用，用数据说话
 -- ------------------------------------------------------------
 CREATE TABLE activity_effects (
     activity_id  TEXT NOT NULL,
     date         TEXT NOT NULL,
-    metric       TEXT NOT NULL,                     -- 指标名
-    baseline     REAL,                              -- 无活动时的基线
-    actual       REAL,                              -- 实际观测值
-    lift         REAL,                              -- 提升幅度
+    metric       TEXT NOT NULL,
+    baseline     REAL,
+    actual       REAL,
+    lift         REAL,
     PRIMARY KEY (activity_id, date, metric)
 );
 
 
 -- ------------------------------------------------------------
--- 6. 剧本事件表 · 生成器的「剧情」，让每根曲线都有解释
+-- 剧本事件 · 生成器的「剧情」，让每根曲线都有解释
 -- ------------------------------------------------------------
 CREATE TABLE story_events (
     event_id     TEXT PRIMARY KEY,
     event_date   TEXT NOT NULL,
+    day_index    INTEGER NOT NULL,
     name         TEXT NOT NULL,
     description  TEXT,
-    impact       TEXT                               -- JSON: 影响的参数与幅度
+    impact       TEXT
 );
 
 CREATE INDEX idx_event_date ON story_events (event_date);
 
 
 -- ------------------------------------------------------------
--- 7. 模拟参数表 · 落库留档，保证数据可解释、可复现
+-- 模拟参数 · 落库留档，保证数据可解释、可复现
 -- ------------------------------------------------------------
 CREATE TABLE sim_config (
     key    TEXT PRIMARY KEY,
@@ -126,51 +157,65 @@ CREATE TABLE sim_config (
 
 
 -- ============================================================
--- 视图：派生指标统一在这里算
+-- 视图
 -- ============================================================
 
 CREATE VIEW v_daily_kpi AS
 SELECT
     date,
     new_users,
+    stock_active,
     dau,
-    returning_users,
     pay_users,
-    revenue,
-    avg_session_min,
-    ROUND(pay_users * 1.0 / dau, 6)  AS pay_rate,   -- 付费率
-    ROUND(revenue / pay_users, 2)    AS arppu,      -- 每付费用户收入
-    ROUND(revenue / dau, 2)          AS arpu        -- 每活跃用户收入
+    pay_rate,
+    ROUND(revenue, 2)             AS revenue,
+    ROUND(revenue / dau, 2)       AS arpu,
+    ROUND(revenue / pay_users, 2) AS arppu
 FROM daily_metrics;
 
 
 CREATE VIEW v_tier_daily AS
 SELECT
-    t.date,
-    t.tier,
-    t.users,
-    t.revenue,
-    ROUND(t.users * 1.0 / SUM(t.users) OVER (PARTITION BY t.date), 6)   AS user_share,
-    ROUND(t.revenue / SUM(t.revenue) OVER (PARTITION BY t.date), 6)     AS revenue_share,
-    CASE WHEN t.users > 0 THEN ROUND(t.revenue / t.users, 2) END        AS arpu_tier
-FROM revenue_tiers t
-WHERE t.tier <> '非R';   -- 非R不参与付费结构判定
+    date,
+    tier_code,
+    tier_name,
+    sort_order,
+    users,
+    ROUND(users * 1.0 / SUM(users) OVER (PARTITION BY date), 6)     AS user_share,
+    arppu,
+    ROUND(revenue, 2)                                               AS revenue,
+    ROUND(revenue / SUM(revenue) OVER (PARTITION BY date), 6)       AS revenue_share
+FROM revenue_tiers;
 
 
 CREATE VIEW v_retention_pivot AS
 SELECT
-    cohort_date,
-    new_users,
-    MAX(CASE WHEN day_n = 1  THEN rate END) AS d1,
-    MAX(CASE WHEN day_n = 3  THEN rate END) AS d3,
-    MAX(CASE WHEN day_n = 7  THEN rate END) AS d7,
-    MAX(CASE WHEN day_n = 14 THEN rate END) AS d14,
-    MAX(CASE WHEN day_n = 30 THEN rate END) AS d30,
-    MAX(CASE WHEN day_n = 60 THEN rate END) AS d60,
-    MAX(CASE WHEN day_n = 90 THEN rate END) AS d90
-FROM (
-    SELECT c.cohort_date, c.day_n, c.rate, m.new_users
-    FROM retention_cohorts c
-    LEFT JOIN daily_metrics m ON m.date = c.cohort_date
-) x
-GROUP BY cohort_date, new_users;
+    c.cohort_date,
+    m.new_users,
+    MAX(CASE WHEN c.day_n = 1  THEN c.rate END) AS d1,
+    MAX(CASE WHEN c.day_n = 3  THEN c.rate END) AS d3,
+    MAX(CASE WHEN c.day_n = 7  THEN c.rate END) AS d7,
+    MAX(CASE WHEN c.day_n = 14 THEN c.rate END) AS d14,
+    MAX(CASE WHEN c.day_n = 30 THEN c.rate END) AS d30,
+    MAX(CASE WHEN c.day_n = 60 THEN c.rate END) AS d60,
+    MAX(CASE WHEN c.day_n = 90 THEN c.rate END) AS d90
+FROM retention_cohorts c
+LEFT JOIN daily_metrics m ON m.date = c.cohort_date
+GROUP BY c.cohort_date, m.new_users;
+
+
+-- 一致性巡检视图：查出任何一行都说明数据有问题
+CREATE VIEW v_consistency AS
+SELECT m.date, '分层人数之和 ≠ 付费用户数' AS issue,
+       SUM(t.users) AS tier_value, m.pay_users AS ref_value
+FROM revenue_tiers t JOIN daily_metrics m ON m.date = t.date
+GROUP BY m.date
+HAVING SUM(t.users) <> m.pay_users
+
+UNION ALL
+
+SELECT m.date, '分层流水之和 ≠ 日流水',
+       ROUND(SUM(t.revenue), 2), ROUND(m.revenue, 2)
+FROM revenue_tiers t JOIN daily_metrics m ON m.date = t.date
+GROUP BY m.date
+HAVING ABS(SUM(t.revenue) - m.revenue) > 0.05;

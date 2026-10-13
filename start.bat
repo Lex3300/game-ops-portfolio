@@ -3,9 +3,17 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 rem ============================================================
-rem  游戏运营数据闭环系统 · 一键启动
-rem  Usage:  double-click, or run  start.bat --days 180 --reset
-rem  NOTE: keep messages ASCII-only; Chinese output comes from Python.
+rem  Game Ops Data Loop - one-click launcher
+rem
+rem  Usage:
+rem    double-click                 -> incremental, append missing days
+rem    start.bat --days 90          -> generate 90 days from start date
+rem    start.bat --reset --days 90  -> wipe and rebuild
+rem
+rem  IMPORTANT: keep this file pure ASCII.
+rem  cmd.exe reads .bat with the system ANSI codepage, so UTF-8 Chinese
+rem  in here would be mis-parsed as commands. All Chinese output is
+rem  produced by Python instead.
 rem ============================================================
 
 set PYEXE=python
