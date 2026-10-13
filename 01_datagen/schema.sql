@@ -5,15 +5,18 @@
 -- 结构对应字段清单：
 --   模块A 大盘数据     → daily_metrics
 --   模块B 付费分层数据  → revenue_tiers
---   DAU 的推导依据      → retention_cohorts
+--   模块C 留存数据      → retention_cohorts（长表存储）+ v_retention_wide（宽表视图，列按配置动态生成）
 --
 -- 扩展原则：所有档位、区间、边界全部来自 config.json，不写死在 SQL 里。
---          新增层级只需改配置，无需动表结构。
+--          新增付费层级只需改配置，无需动表结构。
+--          留存天数（D1~D30）同样不写死：宽表视图由 generator.py 按 config 的
+--          cohort_days 动态创建，补充 D60 / D90 时本文件不需要改动。
 -- ============================================================
 
 PRAGMA foreign_keys = ON;
 
 DROP VIEW  IF EXISTS v_consistency;
+DROP VIEW  IF EXISTS v_retention_wide;
 DROP VIEW  IF EXISTS v_retention_pivot;
 DROP VIEW  IF EXISTS v_tier_daily;
 DROP VIEW  IF EXISTS v_daily_kpi;
@@ -83,14 +86,22 @@ CREATE INDEX idx_tier_date ON revenue_tiers (date, sort_order);
 
 
 -- ------------------------------------------------------------
--- 留存队列 · DAU 的推导依据，同时供诊断使用
---   retained / rate 为 NULL 表示「队列尚未成熟」，不是 0
+-- 模块C · 留存数据（长表存储 / 宽表输出）
+--   字段1 = cohort_date（日期 = 新增队列日）
+--   字段2~31 = day_n 1~30，即 D1~D30 留存率
+--
+--   为什么用长表存、用视图出宽表：
+--     长表结构下「留存天数」不是列，而是行，补 D60/D90 只是多几行数据，不用改表；
+--     出报表时再由 v_retention_wide 转成 D1~D30 的宽表形态。
+--
+--   rate / retained 为 NULL 表示「队列尚未成熟」，不是 0
+--   —— day_n 的观测值只在 cohort_date + day_n 那天才写入，未成熟不落库。
 -- ------------------------------------------------------------
 CREATE TABLE retention_cohorts (
     cohort_date   TEXT    NOT NULL,
     day_n         INTEGER NOT NULL,
-    retained      INTEGER,
-    rate          REAL,
+    retained      INTEGER,                    -- 该队列在 day_n 仍活跃的人数
+    rate          REAL,                       -- 留存率 = retained / cohort 当日新增
     PRIMARY KEY (cohort_date, day_n)
 );
 
@@ -188,20 +199,9 @@ SELECT
 FROM revenue_tiers;
 
 
-CREATE VIEW v_retention_pivot AS
-SELECT
-    c.cohort_date,
-    m.new_users,
-    MAX(CASE WHEN c.day_n = 1  THEN c.rate END) AS d1,
-    MAX(CASE WHEN c.day_n = 3  THEN c.rate END) AS d3,
-    MAX(CASE WHEN c.day_n = 7  THEN c.rate END) AS d7,
-    MAX(CASE WHEN c.day_n = 14 THEN c.rate END) AS d14,
-    MAX(CASE WHEN c.day_n = 30 THEN c.rate END) AS d30,
-    MAX(CASE WHEN c.day_n = 60 THEN c.rate END) AS d60,
-    MAX(CASE WHEN c.day_n = 90 THEN c.rate END) AS d90
-FROM retention_cohorts c
-LEFT JOIN daily_metrics m ON m.date = c.cohort_date
-GROUP BY c.cohort_date, m.new_users;
+-- 留存宽表 v_retention_pivot / v_retention_wide 不在这里定义：
+-- 其列数（D1~D30）取决于 config 的 cohort_days，由 generator.py 的
+-- build_retention_views() 在每次运行时按配置动态创建，避免把字段清单写死。
 
 
 -- 一致性巡检视图：查出任何一行都说明数据有问题

@@ -25,6 +25,12 @@
   各档 ARPPU 在档位区间内随机
   各档流水 = 付费用户数 × ARPPU，汇总即为日流水
 
+模块C 留存
+  字段1 日期 = 新增队列日（cohort_date）
+  字段2~31 = D1~D30 留存率，基准曲线 D1≈45% → D30≈10%
+  每日留存相对基准的波动不超过配置上限（默认 ±3%），由平滑正弦叠构造函数性保证
+  与模块A 的 DAU 推导共用同一条留存曲线 —— 模块C 是模块A 的上游
+
 三条硬约束
 ----------
 1. DAU ≡ 非新增活跃 + 新增               （数据库触发器强制）
@@ -106,21 +112,61 @@ def cfg_set(conn: sqlite3.Connection, key: str, value, note: str = "") -> None:
 
 
 # ================================================================
-# 留存曲线
+# 留存模型（模块C）
 # ================================================================
 
-def build_retention_fn(cfg: dict):
-    """返回 r(day_n, mult_fn=None) —— 新增口径留存率。
+class RetentionModel:
+    """留存率模型：基准曲线 × 剧本系数 × 平滑波动，并对同一队列做单调性保护。
 
-    锚点之间做对数插值（留存曲线的通行形态），超出最大锚点后几何衰减以保证长期收敛。
+    模块C（留存表）与模块A（DAU 推导）共用**同一个** model 实例，
+    所以「非新增活跃池」能从留存表逐日复算出来，两条链路不会各说各话。
+
+    波动设计（对应「每日留存以误差不超过 3% 上下波动」）
+    -------------------------------------------------
+    取若干条不同周期的正弦按权重叠加：
+
+        noise(t, n) = band × Σ wᵢ·sin(2π·t/pᵢ + φᵢ + dᵢ·n) / Σ|wᵢ|
+
+    - **天然有界**：|Σ wᵢ·sin| ≤ Σ|wᵢ|，故 |noise| ≤ band。
+      因为是构造性有界而非事后截断，所以不会在边界堆积、也不会破坏曲线形态。
+    - **天然平滑**：t 为队列日期序号、n 为留存天数，相位随 n 缓慢漂移，
+      相邻队列、相邻天数的扰动高度相关 —— 留存随天数递减的形态得以保持。
     """
-    curve = cfg["retention_curve"]
-    anchors = sorted((int(k), float(v)) for k, v in curve["anchors"].items())
-    tail = float(curve.get("tail_decay", 0.98))
 
-    def base_rate(day_n: int) -> float:
+    def __init__(self, cfg: dict, events: list[dict], first: date):
+        curve = cfg["retention_curve"]
+        self.anchors = sorted((int(k), float(v)) for k, v in curve["anchors"].items())
+        self.tail = float(curve.get("tail_decay", 0.98))
+        self.monotonic = bool(curve.get("monotonic", True))
+        self.first = first
+        # story.affects_retention=false 时，留存严格锁在基准曲线 + ±band 波动，
+        # 剧本事件不再下移留存（它的其它影响，如档位权重，仍然生效）。
+        self.events = events if cfg.get("story", {}).get("affects_retention", True) else []
+
+        ns = curve.get("noise", {}) or {}
+        self.band = float(ns.get("band", 0.0))
+        self.mode = ns.get("mode", "relative")
+        self.periods = [float(x) for x in ns.get("periods", [9.7, 23.3])]
+        weights = ns.get("weights") or [1.0] * len(self.periods)
+        drifts = ns.get("day_phase_drift") or [0.09] * len(self.periods)
+        self.weights = [float(x) for x in weights][:len(self.periods)]
+        self.drifts = [float(x) for x in drifts][:len(self.periods)]
+        self.weights += [1.0] * (len(self.periods) - len(self.weights))
+        self.drifts += [0.09] * (len(self.periods) - len(self.drifts))
+        self.wsum = sum(abs(w) for w in self.weights) or 1.0
+
+        # 相位由种子派生：同一份配置任何时候重跑，扰动序列完全一致
+        rnd = random.Random(f"{cfg['sim']['seed']}:retention-phase")
+        self.phases = [rnd.uniform(0.0, 2 * math.pi) for _ in self.periods]
+
+        self._mult_cache: dict[date, object] = {}
+        self._rate_cache: dict[date, list[float]] = {}
+
+    # ---------- 基准曲线（锚点间对数插值，尾部几何衰减保证收敛） ----------
+    def base(self, day_n: int) -> float:
         if day_n <= 0:
             return 1.0
+        anchors, tail = self.anchors, self.tail
         if day_n <= anchors[0][0]:
             return anchors[0][1]
         if day_n >= anchors[-1][0]:
@@ -134,13 +180,43 @@ def build_retention_fn(cfg: dict):
                 return r1 * (day_n / k1) ** b
         return anchors[-1][1]
 
-    def rate(day_n: int, mult_fn=None) -> float:
-        r = base_rate(day_n)
-        if mult_fn is not None:
-            r *= mult_fn(day_n)
+    # ---------- 剧本系数（按队列注册日推导，增量运行结果一致） ----------
+    def mult_fn(self, cohort: date):
+        if cohort not in self._mult_cache:
+            self._mult_cache[cohort] = make_mult_fn(cohort_retention_mult(cohort, self.events))
+        return self._mult_cache[cohort]
+
+    # ---------- 波动（构造性有界，不需要截断） ----------
+    def noise(self, cohort: date, day_n: int) -> float:
+        if self.band <= 0:
+            return 0.0
+        t = (cohort - self.first).days
+        s = 0.0
+        for p, w, ph, dr in zip(self.periods, self.weights, self.phases, self.drifts):
+            s += w * math.sin(2 * math.pi * t / p + ph + dr * day_n)
+        return self.band * s / self.wsum
+
+    def _raw(self, cohort: date, day_n: int) -> float:
+        r = self.base(day_n) * self.mult_fn(cohort)(day_n)
+        nz = self.noise(cohort, day_n)
+        r = r * (1.0 + nz) if self.mode == "relative" else r + nz
         return max(0.0, min(0.99, r))
 
-    return rate
+    # ---------- 取留存率 ----------
+    def rates(self, cohort: date, upto: int) -> list[float]:
+        """返回 [r(1) … r(upto)]，已做单调性保护（保证 r(n) ≥ r(n+1)）。"""
+        cache = self._rate_cache.setdefault(cohort, [])
+        for n in range(len(cache) + 1, max(upto, 0) + 1):
+            v = self._raw(cohort, n)
+            if self.monotonic and cache:
+                v = min(v, cache[-1])
+            cache.append(v)
+        return cache[:upto]
+
+    def rate(self, cohort: date, day_n: int) -> float:
+        if day_n <= 0:
+            return 1.0
+        return self.rates(cohort, day_n)[-1]
 
 
 def make_mult_fn(mult_dict: dict | None):
@@ -290,7 +366,7 @@ def sample_field(field_cfg: dict, prev, rng: random.Random, is_weekend: bool) ->
 
 
 def gen_day(d: date, first: date, state: dict, cfg: dict, events: list[dict],
-            history: list[tuple[date, int]], rate_fn) -> tuple[dict, list[dict]]:
+            history: list[tuple[date, int]], model: RetentionModel) -> tuple[dict, list[dict]]:
     """生成一天的模块A + 模块B 数据。"""
     ma, mb = cfg["module_a"], cfg["module_b"]
     seed, noise = cfg["sim"]["seed"], cfg["sim"]["noise"]
@@ -303,21 +379,18 @@ def gen_day(d: date, first: date, state: dict, cfg: dict, events: list[dict],
     new_users = max(1, int(round(sample_field(f2, prev.get("new_users"), rng_nu, is_weekend))))
 
     # ---------- 字段3：DAU = 非新增活跃 + 新增（不随机） ----------
+    # 非新增活跃池 = 历史各日新增在该日的存活之和；留存率与模块C 共用同一条曲线
     stock = 0.0
-    weight_cache: dict[str, dict] = {}
-    for c_date, c_new in history:                      # 历史各日新增的存活贡献
+    for c_date, c_new in history:
         day_n = (d - c_date).days
         if day_n <= 0:
             continue
-        key = c_date.isoformat()
-        if key not in weight_cache:
-            weight_cache[key] = cohort_retention_mult(c_date, events)
-        stock += c_new * rate_fn(day_n, make_mult_fn(weight_cache[key]))
+        stock += c_new * model.rate(c_date, day_n)
 
-    # 初始存量：等价于一个「虚拟队列」，使其在首日贡献恰为 stock_active_start
+    # 初始存量：等价于一个「虚拟队列」（注册于起点前一天），使其在首日贡献恰为 stock_active_start
     stock0 = ma["field3_dau"]["stock_active_start"]
-    day_from_start = (d - first).days + 1
-    stock += (stock0 / rate_fn(1)) * rate_fn(day_from_start)
+    virtual = first - timedelta(days=1)
+    stock += (stock0 / model.rate(virtual, 1)) * model.rate(virtual, (d - virtual).days)
 
     stock_active = int(round(stock))
     dau = stock_active + new_users
@@ -386,27 +459,59 @@ def gen_day(d: date, first: date, state: dict, cfg: dict, events: list[dict],
 
 
 def gen_cohort_observation(d: date, first: date, history: list[tuple[date, int]],
-                           observe_days: list[int], events: list[dict], rate_fn,
-                           cfg: dict) -> list[tuple]:
-    """写入「今天观测到的留存」：cohort + day_n == 今天 的那些档位。
+                           cohort_days: int, model: RetentionModel) -> list[tuple]:
+    """写入「今天观测到的留存」：cohort_date + day_n == 今天 的那些档位。
 
-    未成熟的档位不落库（而不是记 0）——队列成熟度是留存数据的固有特性。
+    - 未成熟的档位不落库（而不是记 0）——队列成熟度是留存数据的固有特性。
+    - 留存率取自与 DAU 推导**同一个** model，模块C 与模块A 可互相复算。
     """
-    seed = cfg["sim"]["seed"]
     out = []
-    for day_n in observe_days:
+    new_by_date = dict(history)
+    for day_n in range(1, cohort_days + 1):
         cohort = d - timedelta(days=day_n)
         if cohort < first:
             continue
-        c_new = next((n for c, n in history if c == cohort), None)
+        c_new = new_by_date.get(cohort)
         if c_new is None:
             continue
-        mult_fn = make_mult_fn(cohort_retention_mult(cohort, events))
-        rng = rng_for(seed + 7, "retention", cohort)
-        base_r = rate_fn(day_n, mult_fn)
-        rate = max(0.0, min(0.98, base_r * rng.uniform(1 - 0.05, 1 + 0.05)))
-        out.append((cohort.isoformat(), day_n, int(round(c_new * rate)), round(rate, 6)))
+        rate = model.rate(cohort, day_n)
+        retained = int(round(c_new * rate))
+        out.append((cohort.isoformat(), day_n, retained, round(rate, 6)))
     return out
+
+
+def build_retention_views(conn: sqlite3.Connection, cfg: dict) -> int:
+    """按 config 的 cohort_days 动态创建留存视图，返回列数。
+
+    字段清单后续可能补充（比如加 D60、D90），所以视图的列不写死在 SQL 里：
+    改 cohort_days，表里的行和视图里的列会一起跟着变。
+      · v_retention_wide  —— cohort_date + D1~Dn 全宽表（模块C 的交付形态）
+      · v_retention_pivot —— 只保留常用里程碑（D1/D3/D7/D14/D30…），供诊断和看板用
+    """
+    days = int(cfg["retention_curve"].get("cohort_days", 30))
+    cols = ",\n           ".join(
+        f"MAX(CASE WHEN c.day_n = {n} THEN c.rate END) AS d{n}" for n in range(1, days + 1))
+    milestones = [n for n in (1, 3, 7, 14, 30, 60, 90) if n <= days] or [1]
+    key_cols = ", ".join(f"d{n}" for n in milestones)
+
+    conn.executescript(f"""
+DROP VIEW IF EXISTS v_retention_pivot;
+DROP VIEW IF EXISTS v_retention_wide;
+
+CREATE VIEW v_retention_wide AS
+SELECT c.cohort_date,
+       m.new_users,
+       m.dau,
+           {cols}
+FROM retention_cohorts c
+LEFT JOIN daily_metrics m ON m.date = c.cohort_date
+GROUP BY c.cohort_date, m.new_users, m.dau;
+
+CREATE VIEW v_retention_pivot AS
+SELECT cohort_date, new_users, {key_cols} FROM v_retention_wide;
+""")
+    conn.commit()
+    return days
 
 
 # ================================================================
@@ -423,8 +528,7 @@ def main() -> int:
     cfg = load_config(Path(args.config))
     first = date.fromisoformat(cfg["sim"]["start_date"])
     today = date.today()
-    observe_days = cfg["retention_curve"].get("cohort_observe_days", [1, 3, 7, 14, 30, 60, 90])
-    rate_fn = build_retention_fn(cfg)
+    cohort_days = int(cfg["retention_curve"].get("cohort_days", 30))
 
     if args.reset and DB_PATH.exists():
         DB_PATH.unlink()
@@ -449,6 +553,15 @@ def main() -> int:
         events = load_events(conn)
         first = date.fromisoformat(cfg_get(conn, "start_date", first.isoformat()))
         cfg_set(conn, "config_snapshot", cfg, "生成时的完整配置留档")
+
+    # 留存视图的列数取决于 config，每次运行按当前配置重建（补字段不用改 SQL）
+    build_retention_views(conn, cfg)
+
+    # 留存模型：模块C 与模块A 共用，保证两条链路可互相复算
+    model = RetentionModel(cfg, events, first)
+    print(f"[留存] D1~D{cohort_days}　基准 D1 {model.base(1):.2%} → D7 {model.base(7):.2%} "
+          f"→ D30 {model.base(min(30, cohort_days)):.2%}　"
+          f"波动上限 ±{model.band:.1%}（{model.mode}）")
 
     # ---------- 决定本次生成哪些日期 ----------
     row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
@@ -509,7 +622,7 @@ def main() -> int:
             event_log.append((d, ev["name"], applied))
         state.setdefault("_one_shot", {})
 
-        daily, tiers = gen_day(d, first, state, cfg, events, history, rate_fn)
+        daily, tiers = gen_day(d, first, state, cfg, events, history, model)
         daily_rows.append(tuple(daily[k] for k in (
             "date", "new_users", "stock_active", "dau",
             "pay_rate", "pay_users", "revenue", "created_at")))
@@ -518,7 +631,7 @@ def main() -> int:
              t["sort_order"], t["users"], t["arppu"], t["revenue"]) for t in tiers
         ])
         cohort_rows.extend(
-            gen_cohort_observation(d, first, history, observe_days, events, rate_fn, cfg))
+            gen_cohort_observation(d, first, history, cohort_days, model))
         history.append((d, daily["new_users"]))
         # 供下一天的均值回复取值使用
         state["_prev"] = {"new_users": daily["new_users"], "pay_rate": daily["pay_rate"]}
@@ -565,6 +678,28 @@ def main() -> int:
 
     bad = conn.execute("SELECT COUNT(*) FROM v_consistency").fetchone()[0]
     print(f"[一致性巡检] 异常 {bad} 天" + ("　✅ 全部通过" if bad == 0 else "　❌ 请检查 v_consistency"))
+
+    # ---------- 留存校验：实测波动幅度是否落在配置上限内 ----------
+    worst_abs = worst_rel = 0.0
+    checked = 0
+    for c_s, n, rate in conn.execute(
+            "SELECT cohort_date, day_n, rate FROM retention_cohorts WHERE rate IS NOT NULL"):
+        base = model.base(n) * model.mult_fn(date.fromisoformat(c_s))(n)
+        if base <= 0:
+            continue
+        checked += 1
+        d_abs = abs(rate - base)
+        worst_abs = max(worst_abs, d_abs)
+        worst_rel = max(worst_rel, d_abs / base)
+    if checked:
+        avg = conn.execute(
+            "SELECT ROUND(AVG(d1),4), ROUND(AVG(d7),4), ROUND(AVG(d30),4) "
+            "FROM v_retention_wide WHERE d30 IS NOT NULL").fetchone()
+        if avg and avg[0] is not None:
+            print(f"[留存] 已成熟队列均值　D1 {avg[0]:.2%}　D7 {avg[1]:.2%}　D30 {avg[2]:.2%}")
+        print(f"[留存波动] 观测 {checked} 条　相对基准最大偏离 {worst_rel:.2%}"
+              f"（{worst_abs*100:.2f}pp）　上限 ±{model.band:.0%}"
+              f"　{'✅ 未越界' if worst_rel <= model.band + 1e-9 else '⚠ 超出上限，请检查 monotonic 截断'}")
 
     size_kb = DB_PATH.stat().st_size / 1024
     print(f"[完成] 数据库：{DB_PATH.relative_to(ROOT_DIR)}（{size_kb:,.0f} KB）")
