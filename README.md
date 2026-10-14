@@ -99,16 +99,19 @@ game-ops-portfolio/
 
 ## 快速开始
 
-```bash
-# 首次运行：从固定起点连续生成 90 天数据
-start.bat --days 90
+**双击 `start.bat`** 即可 —— 首次运行补齐全量历史数据，之后每次只追加缺失的天数，已经生成过的日期不会被改写。
 
-# 日常：增量追加（已是最新则自动跳过）
-start.bat
+如果想在命令行里跑（PowerShell）：
+
+```powershell
+cd "$HOME\Desktop\作品集"     # 必须先切到项目目录
+.\start.bat                   # 增量生成（已是最新则自动跳过）
+.\start.bat --days 90         # 指定生成天数
 ```
 
+> ⚠️ **本机 PATH 里没有 `python` 命令**，直接敲 `python xxx.py` 会报"不是内部或外部命令"。
+> `start.bat` / `export.bat` 会自己定位解释器，所以请统一通过这两个脚本调用。
 > 数据库不在仓库里，首次运行会自动生成，克隆后可直接复现。
-> 数据起点固定为 `2026-10-13`，之后逐日累积；已生成的日期不会被改写。
 
 ---
 
@@ -118,7 +121,7 @@ start.bat
 
 **① 双击 `export.bat`（最省事）**
 
-导出到 `data/export/`：
+导出到 `data/export/`，并**自动用 Excel 打开结果**：
 
 | 产物 | 说明 |
 |---|---|
@@ -130,12 +133,22 @@ start.bat
 **② 用任意 SQLite 客户端打开** `data/game.db`
 （DB Browser for SQLite / Navicat / DBeaver 均可，无需安装任何东西即可浏览）
 
-**③ 命令行查询**
+**③ 命令行**
 
-```bash
-python 01_datagen/export_data.py          # 导出 CSV + Excel
-python 01_datagen/export_data.py --list   # 看看能导出哪些数据源
+```powershell
+cd "$HOME\Desktop\作品集"     # 必须先切到项目目录
+
+.\export.bat                  # 导出 + 自动打开 Excel
+.\export.bat --list           # 看看能导出哪些数据源
+.\export.bat --csv-only       # 只要 CSV
 ```
+
+> ⚠️ 不要直接敲 `python 01_datagen/export_data.py`：① 本机 PATH 里没有 `python` 命令；
+> ② 脚本按相对路径找 `data/game.db`，不在项目目录下执行会找不到库。
+> 确实需要直接调解释器时，用完整路径：
+> ```powershell
+> & "$HOME\.workbuddy\binaries\python\envs\default\Scripts\python.exe" "01_datagen\export_data.py"
+> ```
 
 推荐直接查**视图**（已经算好派生指标，不用自己拼）：
 

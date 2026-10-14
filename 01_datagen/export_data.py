@@ -9,6 +9,7 @@
     python export_data.py --csv-only     只导出 CSV（不需要 openpyxl）
     python export_data.py --out 目录      指定输出目录
     python export_data.py --list         列出可导出的数据源
+    python export_data.py --open         导出完成后自动打开结果
 
 输出（默认写到 data/export/）
 ---------------------------
@@ -18,6 +19,7 @@
 
 import argparse
 import csv
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -106,6 +108,8 @@ def main():
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="输出目录")
     ap.add_argument("--csv-only", action="store_true", help="只导出 CSV，不生成 Excel")
     ap.add_argument("--list", action="store_true", help="列出可导出的数据源")
+    ap.add_argument("--open", dest="auto_open", action="store_true",
+                    help="导出完成后自动打开结果（双击 export.bat 时会带上）")
     args = ap.parse_args()
 
     if args.list:
@@ -141,21 +145,35 @@ def main():
         print(f"  [CSV ] {label:<10} {len(rows):>5} 行 × {len(cols):>2} 列")
     conn.close()
 
+    xlsx_path = None
     if not args.csv_only:
         try:
             import openpyxl  # noqa: F401
         except ImportError:
             print()
             print("  [提示] 未安装 openpyxl，跳过 Excel 汇总（CSV 已导出）。")
-            print("         需要 Excel 汇总请先运行：python -m pip install openpyxl")
+            print("         需要 Excel 汇总请换用自带 openpyxl 的解释器，或安装：python -m pip install openpyxl")
         else:
-            xlsx = out / "游戏运营数据.xlsx"
-            write_xlsx(xlsx, collected)
+            xlsx_path = out / "游戏运营数据.xlsx"
+            write_xlsx(xlsx_path, collected)
             print()
             print(f"  [XLSX] 游戏运营数据.xlsx  （{len(collected)} 个工作表）")
 
     print()
     print("完成。用 Excel 打开 data/export/ 下的文件即可。")
+
+    # 双击 export.bat 时自动打开结果：优先开工作簿，否则开目录
+    if args.auto_open:
+        target = xlsx_path if (xlsx_path and xlsx_path.exists()) else out
+        try:
+            if hasattr(os, "startfile"):          # Windows
+                os.startfile(target)
+                print(f"已打开：{target.name}")
+            else:                                  # 其他平台兜底
+                print(f"结果目录：{target}")
+        except OSError as exc:
+            print(f"[提示] 自动打开失败（{exc}），请手动打开：{target}")
+
     return 0
 
 
