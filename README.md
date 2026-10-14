@@ -82,10 +82,11 @@
 ```
 game-ops-portfolio/
 ├─ README.md               # 本文件，项目说明
-├─ start.bat               # 一键：生成数据 + 刷新看板 + 输出活动计划
+├─ start.bat               # 一键：生成 / 增量追加数据
+├─ export.bat              # 一键：把数据库导出成 CSV / Excel
 ├─ data/
 │  ├─ game.db              # SQLite 主库（唯一数据源，首次运行自动生成）
-│  └─ export/              # 看板消费的数据快照（JSON）
+│  └─ export/              # 对外输出：CSV / Excel / 看板 JSON 快照
 ├─ 01_datagen/             # ① 库结构 + 数据生成器 + 剧本配置
 ├─ 02_dashboard/           # ② 看板页面与图表资源
 ├─ 03_activity_agent/      # ③ 活动池 + 影响模型 + 每日计划
@@ -108,6 +109,43 @@ start.bat
 
 > 数据库不在仓库里，首次运行会自动生成，克隆后可直接复现。
 > 数据起点固定为 `2026-10-13`，之后逐日累积；已生成的日期不会被改写。
+
+---
+
+## 数据在哪、怎么取
+
+所有数据只落在**一个文件**里：`data/game.db`（SQLite 单文件库）。三种取法：
+
+**① 双击 `export.bat`（最省事）**
+
+导出到 `data/export/`：
+
+| 产物 | 说明 |
+|---|---|
+| `游戏运营数据.xlsx` | 7 个工作表汇总，比率列自动按百分比显示，首行冻结 |
+| `CSV/*.csv` | 每个数据源一个文件，UTF-8 带 BOM，Excel 双击不乱码 |
+
+> CSV 里存的是原始值（如 `0.083524`），Excel 里已设成百分比显示（`8.35%`）。
+
+**② 用任意 SQLite 客户端打开** `data/game.db`
+（DB Browser for SQLite / Navicat / DBeaver 均可，无需安装任何东西即可浏览）
+
+**③ 命令行查询**
+
+```bash
+python 01_datagen/export_data.py          # 导出 CSV + Excel
+python 01_datagen/export_data.py --list   # 看看能导出哪些数据源
+```
+
+推荐直接查**视图**（已经算好派生指标，不用自己拼）：
+
+| 视图 / 表 | 内容 |
+|---|---|
+| `v_daily_kpi` | 日粒度大盘：新增 / 非新增活跃 / DAU / 付费率 / 付费用户 / 流水 / ARPU / ARPPU |
+| `v_tier_daily` | 各付费档位：用户数 / 人数占比 / 人均付费 / 流水 / 流水占比 |
+| `v_retention_wide` | 每个新增队列的 D1~D30 留存率 |
+| `retention_cohorts` | 留存长表（队列日期 × 天数），宽表由它派生 |
+| `v_consistency` | 一致性巡检——查出任何一行都说明数据有问题，正常应为 0 行 |
 
 ---
 
