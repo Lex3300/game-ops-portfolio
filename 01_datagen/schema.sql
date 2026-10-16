@@ -6,6 +6,7 @@
 --   模块A 大盘数据     → daily_metrics
 --   模块B 付费分层数据  → revenue_tiers
 --   模块C 留存数据      → retention_cohorts（长表存储）+ v_retention_wide（宽表视图，列按配置动态生成）
+--   模块D 新增阈值      → new_user_thresholds（DAU 盈亏平衡线）
 --
 -- 扩展原则：所有档位、区间、边界全部来自 config.json，不写死在 SQL 里。
 --          新增付费层级只需改配置，无需动表结构。
@@ -16,6 +17,7 @@
 PRAGMA foreign_keys = ON;
 
 DROP VIEW  IF EXISTS v_consistency;
+DROP VIEW  IF EXISTS v_threshold_daily;
 DROP VIEW  IF EXISTS v_retention_wide;
 DROP VIEW  IF EXISTS v_retention_pivot;
 DROP VIEW  IF EXISTS v_tier_daily;
@@ -26,6 +28,7 @@ DROP TRIGGER IF EXISTS trg_dau_consistency;
 DROP TABLE IF EXISTS activity_effects;
 DROP TABLE IF EXISTS activities;
 DROP TABLE IF EXISTS revenue_tiers;
+DROP TABLE IF EXISTS new_user_thresholds;
 DROP TABLE IF EXISTS retention_cohorts;
 DROP TABLE IF EXISTS daily_metrics;
 DROP TABLE IF EXISTS story_events;
@@ -106,6 +109,42 @@ CREATE TABLE retention_cohorts (
 );
 
 CREATE INDEX idx_cohort_day ON retention_cohorts (day_n, cohort_date);
+
+
+-- ------------------------------------------------------------
+-- 模块D · 新增阈值（DAU 的盈亏平衡线）
+--
+--   字段1  date             日期
+--   字段2  churned_users    每日流失用户数（昨日活跃中、今日未回流的人数）
+--   字段3  threshold_users  每日新增用户数阈值（= 当日流失用户数）
+--   字段4  new_users        当日新增用户数（放这里便于直接对照，值同模块A）
+--   字段5  margin           安全边际 = 新增 − 阈值
+--   字段6  status           涨跌状态 up / flat / down
+--
+--   口径与推导（全部依赖模块C 的留存数据）：
+--     非新增活跃(t) 是由历史各日新增 × 留存率推导出来的，也就是
+--     「昨天及更早活跃的用户中，今天仍回来的人」。
+--     于是  当日流失用户数 = 昨日 DAU − 今日非新增活跃
+--     由此得到恒等式
+--         DAU(t) − DAU(t−1) = 新增(t) − 流失(t)
+--     即：新增等于流失时 DAU 持平，高于流失时 DAU 上涨。
+--     所以「每日新增阈值」在数值上就等于「当日流失用户数」——
+--     这是定义推导出的结果，不是巧合。
+--
+--   prev_dau / stock_active 为辅助列，保留下来便于把阈值逐项复算回去。
+--   起点首日不存在「昨日活跃」，阈值无定义，记 NULL 而不是 0
+--   ——与留存队列「未成熟不写 0」保持同一套数据纪律。
+-- ------------------------------------------------------------
+CREATE TABLE new_user_thresholds (
+    date             TEXT    PRIMARY KEY,   -- YYYY-MM-DD
+    prev_dau         INTEGER,                -- 前一日 DAU（首日为 NULL）
+    stock_active     INTEGER NOT NULL,       -- 当日非新增活跃（= 回流人数）
+    churned_users    INTEGER,                -- 当日流失用户数（= 阈值）
+    threshold_users  INTEGER,                -- 每日新增用户数阈值
+    new_users        INTEGER NOT NULL,       -- 当日新增用户数
+    margin           INTEGER,                -- 安全边际 = 新增 − 阈值
+    status           TEXT                    -- up / flat / down
+);
 
 
 -- ------------------------------------------------------------
@@ -204,6 +243,52 @@ FROM revenue_tiers;
 -- build_retention_views() 在每次运行时按配置动态创建，避免把字段清单写死。
 
 
+-- 新增阈值视图：直接可用的一行一天，带流失率与「连续同状态天数」
+--   churn_rate = 阈值 ÷ 昨日 DAU，即当日活跃的流失比例
+--                （判定留存好坏请看模块C 的队列留存率；此处的流失率会受
+--                  「队列年龄结构」影响——起点阶段存量池全是新队列，流失率天然偏高）
+--   dau_delta 是 DAU 的日环比增量，恒等于 margin（用于自检）
+--   streak_days 是当前涨/跌状态已经连续了多少天（gaps & islands 写法）
+CREATE VIEW v_threshold_daily AS
+WITH base AS (
+    SELECT
+        t.date,
+        t.prev_dau,
+        t.stock_active,
+        t.churned_users,
+        t.threshold_users,
+        t.new_users,
+        t.margin,
+        t.status,
+        m.dau,
+        m.dau - t.prev_dau AS dau_delta,
+        CASE WHEN t.prev_dau IS NULL OR t.prev_dau = 0 THEN NULL
+             ELSE ROUND(t.threshold_users * 1.0 / t.prev_dau, 6) END AS churn_rate
+    FROM new_user_thresholds t
+    JOIN daily_metrics m ON m.date = t.date
+),
+island AS (
+    SELECT *,
+        ROW_NUMBER() OVER (ORDER BY date)
+      - ROW_NUMBER() OVER (PARTITION BY status ORDER BY date) AS grp
+    FROM base
+)
+SELECT
+    date,
+    prev_dau,
+    stock_active,
+    churned_users,
+    threshold_users,
+    new_users,
+    margin,
+    status,
+    dau,
+    dau_delta,
+    churn_rate,
+    COUNT(*) OVER (PARTITION BY status, grp) AS streak_days
+FROM island;
+
+
 -- 一致性巡检视图：查出任何一行都说明数据有问题
 CREATE VIEW v_consistency AS
 SELECT m.date, '分层人数之和 ≠ 付费用户数' AS issue,
@@ -218,4 +303,22 @@ SELECT m.date, '分层流水之和 ≠ 日流水',
        ROUND(SUM(t.revenue), 2), ROUND(m.revenue, 2)
 FROM revenue_tiers t JOIN daily_metrics m ON m.date = t.date
 GROUP BY m.date
-HAVING ABS(SUM(t.revenue) - m.revenue) > 0.05;
+HAVING ABS(SUM(t.revenue) - m.revenue) > 0.05
+
+UNION ALL
+
+-- 模块D 恒等式自检：安全边际必须恒等于 DAU 的日环比增量
+SELECT m.date, '安全边际 ≠ DAU 日环比增量',
+       t.margin, m.dau - t.prev_dau
+FROM new_user_thresholds t JOIN daily_metrics m ON m.date = t.date
+WHERE t.prev_dau IS NOT NULL
+  AND t.margin <> m.dau - t.prev_dau
+
+UNION ALL
+
+-- 模块D 口径自检：阈值必须等于当日流失用户数
+SELECT t.date, '阈值 ≠ 当日流失用户数',
+       t.threshold_users, t.churned_users
+FROM new_user_thresholds t
+WHERE t.churned_users IS NOT NULL
+  AND t.threshold_users <> t.churned_users;

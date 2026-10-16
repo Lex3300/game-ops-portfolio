@@ -42,7 +42,9 @@ DATASETS = [
      "每个新增队列的 D1~D30 留存率"),
     ("C_留存明细", "retention_cohorts", "cohort_date, day_n",
      "留存长表：队列日期 × 天数"),
-    ("D_剧本事件", "story_events", "day_index",
+    ("D_新增阈值", "v_threshold_daily", "date",
+     "每日流失用户数 / 新增阈值 / 安全边际 / 流失率 / 涨跌状态与连续天数"),
+    ("E_剧本事件", "story_events", "day_index",
      "剧本事件及其影响参数"),
 ]
 
@@ -155,9 +157,17 @@ def main():
             print("         需要 Excel 汇总请换用自带 openpyxl 的解释器，或安装：python -m pip install openpyxl")
         else:
             xlsx_path = out / "游戏运营数据.xlsx"
-            write_xlsx(xlsx_path, collected)
-            print()
-            print(f"  [XLSX] 游戏运营数据.xlsx  （{len(collected)} 个工作表）")
+            try:
+                write_xlsx(xlsx_path, collected)
+            except PermissionError:
+                # 双击导出时会自动打开工作簿；此时若 Excel 还开着，文件被独占锁定。
+                xlsx_path = None
+                print()
+                print("  [跳过] 游戏运营数据.xlsx 正被 Excel 打开，无法写入。")
+                print("         请先关闭 Excel 再重新导出（CSV 已导出，不受影响）。")
+            else:
+                print()
+                print(f"  [XLSX] 游戏运营数据.xlsx  （{len(collected)} 个工作表）")
 
     print()
     print("完成。用 Excel 打开 data/export/ 下的文件即可。")

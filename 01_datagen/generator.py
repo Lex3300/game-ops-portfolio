@@ -31,11 +31,23 @@
   每日留存相对基准的波动不超过配置上限（默认 ±3%），由平滑正弦叠构造函数性保证
   与模块A 的 DAU 推导共用同一条留存曲线 —— 模块C 是模块A 的上游
 
-三条硬约束
-----------
+模块D 新增阈值（DAU 的盈亏平衡线）
+  字段1 日期
+  字段2 每日流失用户数   = 昨日 DAU − 今日非新增活跃（今天没回流的那些人）
+  字段3 每日新增阈值     = 当日流失用户数
+  字段4~6 当日新增 / 安全边际 / 涨跌状态
+  由模块C 的留存数据推出（非新增活跃本身就是留存推导的产物），核心恒等式：
+      DAU(t) − DAU(t−1) = 新增(t) − 流失(t)
+  即新增等于流失时 DAU 持平，高于流失时 DAU 上涨。
+  起点首日不存在「昨日活跃」，阈值无定义，记 NULL（不写 0）。
+
+硬约束
+------
 1. DAU ≡ 非新增活跃 + 新增               （数据库触发器强制）
 2. 各档付费用户数之和 ≡ 付费用户数        （生成后巡检 v_consistency）
 3. 各档流水之和 ≡ 日流水                  （生成后巡检 v_consistency）
+4. 安全边际 ≡ DAU 日环比增量              （生成后巡检 v_consistency）
+5. 阈值 ≡ 当日流失用户数                  （生成后巡检 v_consistency）
 
 其他设计
 --------
@@ -395,6 +407,24 @@ def gen_day(d: date, first: date, state: dict, cfg: dict, events: list[dict],
     stock_active = int(round(stock))
     dau = stock_active + new_users
 
+    # ---------- 模块D：新增阈值（DAU 的盈亏平衡线） ----------
+    # 非新增活跃(t) 就是「昨天及更早活跃、今天仍回来的人」，
+    # 所以   当日流失用户数 = 昨日 DAU − 今日非新增活跃
+    # 于是   DAU(t) − DAU(t−1) = 新增(t) − 流失(t)
+    # ⇒ 新增等于流失时 DAU 持平，高于流失时 DAU 上涨。
+    # 因此「每日新增阈值」在数值上就等于「当日流失用户数」。
+    #
+    # 起点首日不存在「昨日活跃」，阈值无定义 → 记 NULL（与留存队列未成熟不写 0 同一套纪律）。
+    prev_dau = prev.get("dau")
+    if prev_dau is None:
+        churned = threshold = margin = None
+        th_status = None
+    else:
+        churned = int(prev_dau) - stock_active
+        threshold = churned
+        margin = new_users - threshold
+        th_status = "up" if margin > 0 else ("down" if margin < 0 else "flat")
+
     # ---------- 字段4：付费率（区间内随机，严格不越界） ----------
     f4 = ma["field4_pay_rate"]
     rng_pr = rng_for(seed, "pay_rate", d)
@@ -454,6 +484,9 @@ def gen_day(d: date, first: date, state: dict, cfg: dict, events: list[dict],
         "date": d.isoformat(), "new_users": new_users, "stock_active": stock_active,
         "dau": dau, "pay_rate": round(pay_rate, 6), "pay_users": pay_users,
         "revenue": round(total_rev, 2), "created_at": datetime.now().isoformat(timespec="seconds"),
+        # 模块D
+        "prev_dau": prev_dau, "churned_users": churned,
+        "threshold_users": threshold, "margin": margin, "status": th_status,
     }
     return daily, rows
 
@@ -595,11 +628,11 @@ def main() -> int:
     if saved:
         state.update(saved)
 
-    # 增量场景：从库里取最后一天的取值，保证「均值回复」在跨次运行时连续
+    # 增量场景：从库里取最后一天的取值，保证「均值回复」与模块D 在跨次运行时连续
     prev_row = conn.execute(
-        "SELECT new_users, pay_rate FROM daily_metrics ORDER BY date DESC LIMIT 1").fetchone()
+        "SELECT new_users, pay_rate, dau FROM daily_metrics ORDER BY date DESC LIMIT 1").fetchone()
     if prev_row:
-        state["_prev"] = {"new_users": prev_row[0], "pay_rate": prev_row[1]}
+        state["_prev"] = {"new_users": prev_row[0], "pay_rate": prev_row[1], "dau": prev_row[2]}
 
     # 增量场景：补上「上次生成之后、本次开始之前」发生的事件影响
     if last_in_db is not None:
@@ -614,6 +647,7 @@ def main() -> int:
 
     # ---------- 逐日生成 ----------
     daily_rows, tier_rows, cohort_rows, event_log = [], [], [], []
+    threshold_rows: list[tuple] = []
     for d in todo:
         for ev in events_by_date.get(d.isoformat(), []):
             applied = apply_persistent_impact(state, ev["impact"])
@@ -632,9 +666,13 @@ def main() -> int:
         ])
         cohort_rows.extend(
             gen_cohort_observation(d, first, history, cohort_days, model))
+        threshold_rows.append(tuple(daily[k] for k in (
+            "date", "prev_dau", "stock_active", "churned_users",
+            "threshold_users", "new_users", "margin", "status")))
         history.append((d, daily["new_users"]))
-        # 供下一天的均值回复取值使用
-        state["_prev"] = {"new_users": daily["new_users"], "pay_rate": daily["pay_rate"]}
+        # 供下一天的均值回复取值与模块D 阈值推导使用
+        state["_prev"] = {"new_users": daily["new_users"], "pay_rate": daily["pay_rate"],
+                          "dau": daily["dau"]}
         state["_one_shot"] = {}
 
     # ---------- 落库 ----------
@@ -650,6 +688,10 @@ def main() -> int:
         conn.executemany(
             "INSERT OR REPLACE INTO retention_cohorts (cohort_date, day_n, retained, rate) "
             "VALUES (?, ?, ?, ?)", cohort_rows)
+        conn.executemany(
+            "INSERT OR REPLACE INTO new_user_thresholds "
+            "(date, prev_dau, stock_active, churned_users, threshold_users, new_users, margin, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", threshold_rows)
         cfg_set(conn, "runtime_state", state, "运行状态快照（保证增量生成可续跑）")
         cfg_set(conn, "last_run", datetime.now().isoformat(timespec="seconds"), "上次生成时间")
         cfg_set(conn, "total_days_planned", (first + timedelta(days=(cfg["sim"]["days"] - 1))).isoformat(),
@@ -661,6 +703,7 @@ def main() -> int:
     print(f"  daily_metrics      {len(daily_rows):>6} 行")
     print(f"  revenue_tiers      {len(tier_rows):>6} 行")
     print(f"  retention_cohorts  {len(cohort_rows):>6} 行")
+    print(f"  new_user_thresholds{len(threshold_rows):>6} 行")
     if future:
         print(f"  ⚠ 其中 {len(future)} 天日期晚于今天，属推演数据（{future[0]} → {future[-1]}）")
 
@@ -675,6 +718,23 @@ def main() -> int:
         "FROM daily_metrics").fetchone()
     print(f"\n[库概况] {stat[0]} 天（{stat[1]} → {stat[2]}）　"
           f"平均 DAU {stat[3]:,.0f}　平均日流水 ¥{stat[4]:,.0f}")
+
+    # ---------- 模块D 摘要：最近 7 天的新增阈值 ----------
+    recent = conn.execute(
+        "SELECT date, new_users, threshold_users, margin, status "
+        "FROM new_user_thresholds WHERE threshold_users IS NOT NULL "
+        "ORDER BY date DESC LIMIT 7").fetchall()
+    if recent:
+        arrow = {"up": "↑ 上涨", "flat": "→ 持平", "down": "↓ 下滑"}
+        print("\n[新增阈值] 最近 7 天　（新增 < 阈值 ⇒ DAU 净下滑）")
+        print(f"  {'日期':<12}{'新增':>7}{'流失=阈值':>11}{'安全边际':>10}  状态")
+        for dt, nu, th, mg, st in reversed(recent):
+            print(f"  {dt:<12}{nu:>7,}{th:>11,}{mg:>+10,}  {arrow.get(st, '-')}")
+        agg = conn.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN margin < 0 THEN 1 ELSE 0 END) "
+            "FROM new_user_thresholds WHERE threshold_users IS NOT NULL").fetchone()
+        total_th, below = agg[0], (agg[1] or 0)
+        print(f"  合计 {below}/{total_th} 天新增不敌流失（{below * 100 // max(total_th, 1)}%）")
 
     bad = conn.execute("SELECT COUNT(*) FROM v_consistency").fetchone()[0]
     print(f"[一致性巡检] 异常 {bad} 天" + ("　✅ 全部通过" if bad == 0 else "　❌ 请检查 v_consistency"))
