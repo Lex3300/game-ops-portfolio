@@ -1,0 +1,128 @@
+{
+  "_comment": "由 activity_engine.py 生成。kind=update 为配置改动，kind=enable 为未上线排期落地。已上线（有冻结期）的活动不进建议。",
+  "generated_at": "2026-10-17 12:00:00",
+  "today": "2026-10-17",
+  "month": "2026-10",
+  "diag": {
+    "need_daily": 32655.52,
+    "gap_daily": 24529.31,
+    "gap_total": 457177.28,
+    "seg_struct": 17.826999618008006,
+    "seg_volume": 0.0,
+    "seg_rest": 82.17300038199198,
+    "l5_rate": 0.4448,
+    "struct_gap": 4372.84,
+    "volume_gap": 0
+  },
+  "rule_book": {
+    "C-WHALE-01": "L5 客单达成率 < 80% → 高价位活动补阶梯档 + 收紧库存",
+    "C-BUNDLE-01": "L5 客单达成率 < 80% → 累充顶档上探，承接大R 单日目标",
+    "C-PITY-01": "结构缺口占比 ≥ 10% → 抽奖降保底，降低参与风险感",
+    "C-SCARCITY-01": "结构缺口 ≥ 10% 且 L5 < 80% → 存量抽奖提价 + 限量",
+    "C-BREADTH-01": "流量/转化缺口 > 0 → 低档礼包补 1 元档，拉付费率"
+  },
+  "items": [
+    {
+      "kind": "enable",
+      "activity_id": "ACT-GIFT-006",
+      "name": "终身限量礼包·第 2 期",
+      "type": "礼包",
+      "target": "中大R",
+      "risk": "low",
+      "config_table": "cfg_act_gift_006",
+      "locked": false,
+      "rule_code": "R-LIMIT-01",
+      "reason": "L5 客单不足目标 → 终身限量礼包补付费跃迁；限量 3000 份，告警库存机制",
+      "expect": "",
+      "schedule_id": "SCH-202610-012",
+      "period": "10-20~10-31",
+      "period_count": 1,
+      "diffs": [],
+      "target_config": {
+        "price_tiers": "328/648",
+        "reward_desc": "终身限量资源包",
+        "limit_per_user": 1,
+        "stock": 2000,
+        "cycle": "一次性"
+      },
+      "suggestion_id": "SUG-01"
+    },
+    {
+      "kind": "enable",
+      "activity_id": "ACT-SPEC-002",
+      "name": "周末限时收益 UP·第 2 期",
+      "type": "特殊",
+      "target": "全量",
+      "risk": "low",
+      "config_table": "cfg_act_spec_002",
+      "locked": true,
+      "rule_code": "R-WEEKEND-01",
+      "reason": "周末档：周六日双倍掉落，拉周末活跃；双倍掉落，拉周末活跃",
+      "expect": "",
+      "schedule_id": "SCH-202610-013",
+      "period": "10-24~10-25、10-31~10-31",
+      "period_count": 2,
+      "diffs": [],
+      "target_config": {
+        "multiplier": 2.0,
+        "reward_desc": "双倍掉落 / 双倍经验",
+        "cycle": "周"
+      },
+      "suggestion_id": "SUG-02"
+    },
+    {
+      "kind": "enable",
+      "activity_id": "ACT-TASK-002",
+      "name": "累充任务·星海冲刺",
+      "type": "任务",
+      "target": "大R",
+      "risk": "high",
+      "config_table": "cfg_act_task_002",
+      "locked": false,
+      "rule_code": "R-CATCH-01",
+      "reason": "承接：冲刺结束后接累充，避免流水断崖；月底流水冲刺，与定向抽奖错峰承接",
+      "expect": "",
+      "schedule_id": "SCH-202610-014",
+      "period": "10-24~10-31",
+      "period_count": 1,
+      "diffs": [],
+      "target_config": {
+        "price_tiers": "6/30/128/328/648/1288",
+        "reward_desc": "五档累计充值奖励",
+        "limit_per_user": 6,
+        "cycle": "一次性"
+      },
+      "suggestion_id": "SUG-03"
+    }
+  ],
+  "skipped": [
+    {
+      "activity_id": "ACT-GIFT-006",
+      "name": "终身限量礼包",
+      "rule_code": "C-WHALE-01",
+      "why": "配置已是建议值，无需变更（已发布过）"
+    },
+    {
+      "activity_id": "ACT-TASK-002",
+      "name": "累充任务",
+      "rule_code": "C-BUNDLE-01",
+      "why": "配置已是建议值，无需变更（已发布过）"
+    },
+    {
+      "activity_id": "ACT-DRAW-002",
+      "name": "保底抽奖",
+      "rule_code": "C-PITY-01",
+      "why": "配置已是建议值，无需变更（已发布过）"
+    },
+    {
+      "activity_id": "ACT-DRAW-004",
+      "name": "存量抽奖",
+      "rule_code": "C-SCARCITY-01",
+      "why": "配置已是建议值，无需变更（已发布过）"
+    },
+    {
+      "rule_code": "C-BREADTH-01",
+      "why": "流量/转化缺口 0.0%，付费人数不缺，不建议再拉宽低价档"
+    }
+  ]
+}

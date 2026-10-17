@@ -1,0 +1,517 @@
+{
+  "_comment": "活动库种子（模块③）。形式取自 game-activity-ops 活动武器库（7 大类型 / 40+ 形式），此处落为 27 个可执行活动，每个活动对应一张独立配置表 cfg_act_xxx（表结构由引擎按类型生成，数据来自这里的 config）。activity_id 为主键；aliases 用于兼容排期台账里的历史活动名（如「第 1 期」这类实例名）。引擎每次运行按 id 幂等 upsert，改这里即可维护活动库。",
+  "version": "2026-10-17",
+  "activities": [
+    {
+      "activity_id": "ACT-GIFT-001",
+      "name": "首充礼包·双倍重置",
+      "type": "礼包",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "核心设计",
+      "risk": "low",
+      "purpose": "提升付费率",
+      "lever": "付费率",
+      "note": "开服破冰；存量用户首充双倍重置",
+      "config": {
+        "price_tiers": "6/30/98",
+        "reward_desc": "首充双倍钻石",
+        "limit_per_user": 1,
+        "cycle": "终身 1 次（可重置）"
+      }
+    },
+    {
+      "activity_id": "ACT-GIFT-002",
+      "name": "每日礼包轮换",
+      "type": "礼包",
+      "target": "中小R",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升付费频次",
+      "lever": "ARPPU",
+      "note": "6/30/68 元日循环，撑付费面",
+      "config": {
+        "price_tiers": "6/30/68",
+        "reward_desc": "每日轮换资源包",
+        "limit_per_user": 1,
+        "cycle": "日"
+      }
+    },
+    {
+      "activity_id": "ACT-GIFT-003",
+      "name": "回归玩家专属礼包",
+      "type": "礼包",
+      "target": "流失召回",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升回流",
+      "lever": "回流",
+      "note": "N 天未登录触发，超高性价比",
+      "config": {
+        "price_tiers": "1/6",
+        "reward_desc": "回归补给包",
+        "limit_per_user": 1,
+        "trigger_cond": "连续 14 天未登录",
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-GIFT-004",
+      "name": "新手 7 日礼包链",
+      "type": "礼包",
+      "target": "新用户",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升次留与付费率",
+      "lever": "付费率",
+      "note": "逐日解锁，付费解锁进阶档",
+      "config": {
+        "price_tiers": "6/30",
+        "reward_desc": "7 日逐日资源 + 进阶档",
+        "limit_per_user": 7,
+        "cycle": "日"
+      }
+    },
+    {
+      "activity_id": "ACT-GIFT-005",
+      "name": "限时礼包·节点特惠",
+      "type": "礼包",
+      "target": "全量",
+      "duration_days": 3,
+      "cadence": "节点",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升付费频次",
+      "lever": "ARPPU",
+      "note": "缺口临门一脚用，不可长期化",
+      "config": {
+        "price_tiers": "30/128",
+        "reward_desc": "节点限定资源包",
+        "limit_per_user": 2,
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-GIFT-006",
+      "name": "终身限量礼包",
+      "type": "礼包",
+      "target": "中大R",
+      "duration_days": null,
+      "cadence": "节点",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "促进付费跃迁",
+      "lever": "ARPPU",
+      "aliases": [
+        "终身限量礼包·第 1 期",
+        "终身限量礼包·第 2 期",
+        "终身限量礼包·第 3 期"
+      ],
+      "note": "必须有库存与告罄机制，否则破坏分层",
+      "config": {
+        "price_tiers": "328/648",
+        "reward_desc": "终身限量资源包",
+        "limit_per_user": 1,
+        "stock": 2000,
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-GIFT-007",
+      "name": "周/月礼包",
+      "type": "礼包",
+      "target": "中小R",
+      "duration_days": null,
+      "cadence": "周度",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升付费频次",
+      "lever": "ARPPU",
+      "note": "付费频次稳定器",
+      "config": {
+        "price_tiers": "30/98",
+        "reward_desc": "周档资源合集",
+        "limit_per_user": 1,
+        "cycle": "周"
+      }
+    },
+    {
+      "activity_id": "ACT-BEN-001",
+      "name": "周卡 / 月卡",
+      "type": "权益",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "核心设计",
+      "risk": "low",
+      "purpose": "提升留存与付费率",
+      "lever": "留存",
+      "note": "养每日登录习惯的钉子",
+      "config": {
+        "price_tiers": "30/128",
+        "reward_desc": "每日登录领 1 份",
+        "cycle": "日"
+      }
+    },
+    {
+      "activity_id": "ACT-BEN-002",
+      "name": "月度通行证",
+      "type": "权益",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "月度",
+      "difficulty": "核心设计",
+      "risk": "low",
+      "purpose": "提升留存与付费率",
+      "lever": "留存",
+      "aliases": [
+        "月度通行证·第一赛季"
+      ],
+      "note": "留存与付费率双收的最强单品",
+      "config": {
+        "price_tiers": "68",
+        "reward_desc": "免费轨 + 付费轨",
+        "cycle": "月"
+      }
+    },
+    {
+      "activity_id": "ACT-BEN-003",
+      "name": "等级基金",
+      "type": "权益",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "月度",
+      "difficulty": "较难",
+      "risk": "low",
+      "purpose": "提升留存与 ARPPU",
+      "lever": "ARPPU",
+      "note": "把未来目标提前变现，达标条件是设计难点",
+      "config": {
+        "price_tiers": "98/198",
+        "reward_desc": "按等级返还资源",
+        "cycle": "赛季"
+      }
+    },
+    {
+      "activity_id": "ACT-BEN-004",
+      "name": "赛季通行证",
+      "type": "权益",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "赛季",
+      "difficulty": "较难",
+      "risk": "low",
+      "purpose": "提升长线留存与 ARPPU",
+      "lever": "留存",
+      "note": "链路更长、付费档位更多",
+      "config": {
+        "price_tiers": "68/128",
+        "reward_desc": "赛季任务积分兑换",
+        "cycle": "赛季"
+      }
+    },
+    {
+      "activity_id": "ACT-DRAW-001",
+      "name": "定向抽奖",
+      "type": "抽奖",
+      "target": "大R",
+      "duration_days": 7,
+      "cadence": "节点",
+      "difficulty": "中等",
+      "risk": "mid",
+      "purpose": "提升 ARPPU",
+      "lever": "ARPPU",
+      "aliases": [
+        "定向抽奖·星舰定制奖池"
+      ],
+      "note": "自选大奖 + 保底，付费意愿高于常规抽奖",
+      "config": {
+        "price_tiers": "6/68",
+        "reward_desc": "自选大奖池 + 保底",
+        "pity_times": 60,
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-DRAW-002",
+      "name": "保底抽奖",
+      "type": "抽奖",
+      "target": "大R",
+      "duration_days": 7,
+      "cadence": "节点",
+      "difficulty": "中等",
+      "risk": "mid",
+      "purpose": "提升 ARPPU",
+      "lever": "ARPPU",
+      "note": "抽数进度可见，降低风险感",
+      "config": {
+        "price_tiers": "6/30",
+        "reward_desc": "累计 N 次必得大奖（抽数进度可视化，保底跨期继承）",
+        "pity_times": 45,
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-DRAW-003",
+      "name": "免费抽奖券/活跃抽奖",
+      "type": "抽奖",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升活跃与付费转化",
+      "lever": "DAU",
+      "note": "先尝后买，覆盖零付费",
+      "config": {
+        "reward_desc": "每日活跃送 1 抽",
+        "cycle": "日"
+      }
+    },
+    {
+      "activity_id": "ACT-DRAW-004",
+      "name": "存量抽奖",
+      "type": "抽奖",
+      "target": "大R",
+      "duration_days": 5,
+      "cadence": "节点",
+      "difficulty": "较难",
+      "risk": "high",
+      "purpose": "提升 ARPPU",
+      "lever": "ARPPU",
+      "note": "稀缺性最强、单次爆发最高，但会透支后续，只适合版本节点",
+      "config": {
+        "price_tiers": "68/328/648",
+        "reward_desc": "固定奖池，抽一少一",
+        "stock": 3000,
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-TASK-001",
+      "name": "累登签到",
+      "type": "任务",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升留存与 DAU",
+      "lever": "留存",
+      "note": "连续登录奖励递增，可补签",
+      "config": {
+        "reward_desc": "7 日循环签到奖励",
+        "cycle": "日"
+      }
+    },
+    {
+      "activity_id": "ACT-TASK-002",
+      "name": "累充任务",
+      "type": "任务",
+      "target": "大R",
+      "duration_days": 7,
+      "cadence": "节点",
+      "difficulty": "较难",
+      "risk": "high",
+      "purpose": "提升 ARPPU",
+      "lever": "ARPPU",
+      "aliases": [
+        "累充任务·星海冲刺"
+      ],
+      "note": "收入冲刺核武器；必须配承接活动，避免活动后断崖",
+      "config": {
+        "price_tiers": "6/30/128/328/648/1288",
+        "reward_desc": "五档累计充值奖励",
+        "limit_per_user": 6,
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-TASK-003",
+      "name": "每日任务",
+      "type": "任务",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升活跃",
+      "lever": "DAU",
+      "note": "登录 / 对战 / 消费行为领奖，按日重置",
+      "config": {
+        "reward_desc": "活跃度宝箱",
+        "cycle": "日"
+      }
+    },
+    {
+      "activity_id": "ACT-TASK-004",
+      "name": "活跃宝箱",
+      "type": "任务",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升在线时长",
+      "lever": "DAU",
+      "note": "在线时长达标开箱",
+      "config": {
+        "reward_desc": "30/60/120 分钟三档宝箱",
+        "cycle": "日"
+      }
+    },
+    {
+      "activity_id": "ACT-RANK-001",
+      "name": "开服竞技排行榜",
+      "type": "排行榜",
+      "target": "全量",
+      "duration_days": 7,
+      "cadence": "节点",
+      "difficulty": "中等",
+      "risk": "mid",
+      "purpose": "提升活跃与荣誉感",
+      "lever": "DAU",
+      "note": "荣誉型奖励，非消费榜，风险低于消费榜",
+      "config": {
+        "rank_metric": "战力排名",
+        "reward_desc": "稀有称号 + 资源",
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-RANK-002",
+      "name": "消费排行榜",
+      "type": "排行榜",
+      "target": "大R",
+      "duration_days": 7,
+      "cadence": "节点",
+      "difficulty": "中等",
+      "risk": "high",
+      "purpose": "提升 ARPPU",
+      "lever": "ARPPU",
+      "note": "只服务极少数头部且易引舆情；须给非头部设置参与奖",
+      "config": {
+        "rank_metric": "累计充值额",
+        "reward_desc": "榜单排名奖励",
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-SPEC-001",
+      "name": "老带新邀请返利",
+      "type": "特殊",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "中等",
+      "risk": "low",
+      "purpose": "拉新",
+      "lever": "拉新",
+      "note": "邀请达标双方获益，需防刷",
+      "config": {
+        "reward_desc": "邀请礼包 + 返利",
+        "trigger_cond": "被邀请人达 10 级",
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-SPEC-002",
+      "name": "周末限时收益 UP",
+      "type": "特殊",
+      "target": "全量",
+      "duration_days": 2,
+      "cadence": "周末",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升周末活跃",
+      "lever": "DAU",
+      "aliases": [
+        "周末限时收益 UP·第 1 期",
+        "周末限时收益 UP·第 2 期",
+        "周末限时收益 UP·第 3 期"
+      ],
+      "note": "性价比最高的日活工具，风险极低",
+      "config": {
+        "multiplier": 2.0,
+        "reward_desc": "双倍掉落 / 双倍经验",
+        "cycle": "周"
+      }
+    },
+    {
+      "activity_id": "ACT-SPEC-003",
+      "name": "限时双倍掉落",
+      "type": "特殊",
+      "target": "全量",
+      "duration_days": 1,
+      "cadence": "周末",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升活跃时长",
+      "lever": "DAU",
+      "note": "玩法产出翻倍，直接拉时长",
+      "config": {
+        "multiplier": 2.0,
+        "reward_desc": "指定副本掉落翻倍",
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-SPEC-004",
+      "name": "节日/联动活动",
+      "type": "特殊",
+      "target": "全量",
+      "duration_days": 10,
+      "cadence": "节点",
+      "difficulty": "难",
+      "risk": "low",
+      "purpose": "拉新与回流",
+      "lever": "拉新",
+      "note": "周期长、成本高，需跟版本节奏",
+      "config": {
+        "reward_desc": "主题限定内容",
+        "cycle": "一次性"
+      }
+    },
+    {
+      "activity_id": "ACT-SHOP-001",
+      "name": "常驻商品售卖",
+      "type": "商城",
+      "target": "全量",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "消耗货币、锚定价展示",
+      "lever": "消耗",
+      "note": "不是拉收入主力，但经济通胀时是必开的回收口",
+      "config": {
+        "price_tiers": "按道具定价",
+        "cycle": "常驻"
+      }
+    },
+    {
+      "activity_id": "ACT-SHOP-002",
+      "name": "积分兑换",
+      "type": "商城",
+      "target": "中大R",
+      "duration_days": null,
+      "cadence": "常驻",
+      "difficulty": "简单",
+      "risk": "low",
+      "purpose": "提升 ARPPU",
+      "lever": "ARPPU",
+      "note": "力度是唯一调节旋钮：放免费积分拉活跃，设付费专享拉付费",
+      "config": {
+        "reward_desc": "积分兑换道具池",
+        "cycle": "周"
+      }
+    }
+  ]
+}
