@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-客服知识库构建（模块⑤）：把《蜜雪传奇_客服答疑手册.md》切成可检索的知识块。
+客服知识库构建（模块⑤）：把《Q&A-RAG.md》（原《蜜雪传奇_客服答疑手册.md》）切成可检索的知识块。
 
 为什么要有这个脚本
 ------------------
@@ -31,7 +31,9 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "蜜雪传奇_客服答疑手册.md"
+# 手册源文件：2026-10-17 起改名为 Q&A-RAG.md，旧名保留兼容
+SRC_CANDIDATES = (ROOT / "Q&A-RAG.md", ROOT / "蜜雪传奇_客服答疑手册.md")
+SRC = next((p for p in SRC_CANDIDATES if p.exists()), SRC_CANDIDATES[0])
 OUT = Path(__file__).resolve().parent / "kb.json"
 
 # 手册所在的二级标题里，哪些是问答、哪些是叙述
@@ -154,7 +156,7 @@ def build(src=SRC):
             cats[c["cat"]] += 1
 
     return {
-        "_comment": "由 05_cs_rag/build_kb.py 从《蜜雪传奇_客服答疑手册.md》自动生成，勿手改。",
+        "_comment": "由 05_cs_rag/build_kb.py 从《Q&A-RAG.md》自动生成，勿手改。",
         "source": src.name,
         "version": "V1.0",
         "built_at": __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

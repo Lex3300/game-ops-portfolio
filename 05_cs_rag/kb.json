@@ -1,8 +1,8 @@
 {
-  "_comment": "由 05_cs_rag/build_kb.py 从《蜜雪传奇_客服答疑手册.md》自动生成，勿手改。",
-  "source": "蜜雪传奇_客服答疑手册.md",
+  "_comment": "由 05_cs_rag/build_kb.py 从《Q&A-RAG.md》自动生成，勿手改。",
+  "source": "Q&A-RAG.md",
   "version": "V1.0",
-  "built_at": "2026-10-17 12:26:22",
+  "built_at": "2026-10-17 22:45:20",
   "stats": {
     "chunks": 115,
     "faq": 113,
