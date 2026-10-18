@@ -1868,14 +1868,14 @@ window.DASHBOARD_DATA = {"meta":{"generated_at":"2026-10-18 10:09:56","data_star
     const monthLabel = minD.slice(0, 4) + ' 年 ' + Number(minD.slice(5, 7)) + ' 月';
 
     const chartEl = document.getElementById('chart-gantt');
-    chartEl.style.height = (78 + items.length * 30) + 'px';   // 行数变化时自动撑高
+    chartEl.style.height = (96 + items.length * 30) + 'px';   // 行数变化时自动撑高
     const chart = rings['chart-gantt'] || echarts.init(chartEl);
     rings['chart-gantt'] = chart;
 
     chart.setOption({
       animationDuration: 800,
       animationEasing: 'cubicOut',
-      grid: { left: 216, right: 30, top: 64, bottom: 16 },
+      grid: { left: 216, right: 30, top: 84, bottom: 16 },
       tooltip: {
         confine: true,
         formatter: function (ps) {
@@ -1900,8 +1900,8 @@ window.DASHBOARD_DATA = {"meta":{"generated_at":"2026-10-18 10:09:56","data_star
         position: 'top',
         name: monthLabel,
         nameLocation: 'middle',
-        nameGap: 30,
-        nameTextStyle: { fontSize: 13, fontWeight: 600, color: '#1f2937' },
+        nameGap: 42,
+        nameTextStyle: { fontSize: 18, fontWeight: 700, color: '#111827' },
         axisLabel: {
           interval: 0,                                            // 每一天都显示
           fontSize: 10.5,
@@ -1971,8 +1971,23 @@ window.DASHBOARD_DATA = {"meta":{"generated_at":"2026-10-18 10:09:56","data_star
             symbol: 'none', animation: false,
             lineStyle: { color: '#d64545', type: 'dashed', width: 1.2 },
             label: {
-              show: true, formatter: '今天',
-              fontSize: 10.5, color: '#d64545', position: 'start', distance: 4
+              show: true, position: 'start', distance: 4,
+              formatter: '{drop|}',
+              rich: {
+                /* 水滴状“今天”标识：SVG 动态生成，内嵌当日日期 */
+                drop: {
+                  backgroundColor: { image: (function () {
+                    const dNum = todayStr ? todayStr.slice(8) : '';
+                    const svg =
+                      '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="38" viewBox="0 0 30 38">' +
+                      '<path d="M15 1 C15 1 2.5 16.5 2.5 25 a12.5 12.5 0 0 0 25 0 C27.5 16.5 15 1 15 1 Z" fill="#d64545"/>' +
+                      '<text x="15" y="30" text-anchor="middle" font-size="12.5" font-weight="700" fill="#fff" font-family="Arial,sans-serif">' + dNum + '</text>' +
+                      '</svg>';
+                    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                  })() },
+                  width: 26, height: 33
+                }
+              }
             },
             data: [{ xAxis: todayIdx >= 0 ? todayIdx : lastIdx }]
           }
