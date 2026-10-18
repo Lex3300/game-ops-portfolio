@@ -1690,14 +1690,12 @@ h1{
               show: true, position: 'start', distance: 4,
               formatter: '{drop|}',
               rich: {
-                /* 水滴状“今天”标识：尖头朝下指向当日，圆肚内嵌日期 */
+                /* 水滴状“今天”标识：尖头朝下指向当日，纯定位标记 */
                 drop: {
                   backgroundColor: { image: (function () {
-                    const dNum = todayStr ? todayStr.slice(8) : '';
                     const svg =
                       '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="38" viewBox="0 0 30 38">' +
                       '<path d="M15 37 C15 37 2.5 21.5 2.5 13 a12.5 12.5 0 0 1 25 0 C27.5 21.5 15 37 15 37 Z" fill="#2b6cb0"/>' +
-                      '<text x="15" y="17.5" text-anchor="middle" font-size="12.5" font-weight="700" fill="#fff" font-family="Arial,sans-serif">' + dNum + '</text>' +
                       '</svg>';
                     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
                   })() },
