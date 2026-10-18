@@ -331,7 +331,13 @@ h1{
 .sn-x{font:inherit;font-size:11px;border:1px solid var(--line);background:#fff;color:var(--ink-2);
   border-radius:5px;padding:1px 6px;cursor:pointer;}
 .sn-x:hover{border-color:var(--brand);color:var(--brand);}
-.sn-feed{border:1px solid var(--line);border-radius:11px;background:var(--panel);overflow:hidden;}
+.sn-feed{border:1px solid var(--line);border-radius:11px;background:var(--panel);
+  overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;}
+.sn-feed::-webkit-scrollbar{width:8px;}
+.sn-feed::-webkit-scrollbar-thumb{background:#ccd4e0;border-radius:4px;
+  background-clip:padding-box;border:2px solid var(--panel);}
+.sn-feed::-webkit-scrollbar-thumb:hover{background:#aeb9ca;background-clip:padding-box;border:2px solid var(--panel);}
+.sn-feed::-webkit-scrollbar-track{background:transparent;}
 .sn-item{padding:11px 15px;border-bottom:1px solid #f1f4f8;cursor:pointer;}
 .sn-item:last-child{border-bottom:0;}
 .sn-item:hover{background:#fafcff;}
@@ -2553,6 +2559,15 @@ h1{
     });
   }
 
+  /* 舆情流改为内部滚动：高度实时对齐右侧栏（减去顶部筛选工具条，底边齐平） */
+  function syncSnHeight() {
+    const feed = document.getElementById('sn-feed');
+    const side = document.querySelector('.sn-side');
+    const bar = document.querySelector('.sn-toolbar');
+    if (!feed || !side) return;
+    feed.style.maxHeight = Math.max(260, side.offsetHeight - (bar ? bar.offsetHeight + 12 : 0)) + 'px';
+  }
+
   function renderSentiment() {
     const m = SENT.meta || {};
     // #sn-FP-0001 可直达某条语料的展开态（演示/分享用）
@@ -2575,6 +2590,11 @@ h1{
     snTopicChart();
     snAlerts();
     snBind();
+    syncSnHeight();
+    if (SN.open) {                                          // 高度框定后再定位直达条目
+      const o = document.querySelector('.sn-item.open');
+      if (o) o.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   /* ---------- 启动 ---------- */
@@ -2590,9 +2610,10 @@ h1{
   let rt = null;
   window.addEventListener('resize', function () {
     clearTimeout(rt);
-    rt = setTimeout(function () {
+    rt =     setTimeout(function () {
       Object.keys(rings).forEach(function (k) { rings[k].resize(); });
       Object.keys(snCharts).forEach(function (k) { snCharts[k].resize(); });
+      syncSnHeight();
     }, 150);
   });
 })();
