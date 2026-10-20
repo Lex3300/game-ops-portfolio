@@ -104,6 +104,56 @@ def load_tiers(conn):
     ]
 
 
+def load_recent(conn, daily, today, days=7):
+    """近 N 日日数据（区块01b 用）。
+
+    一行 = 一个自然日，同时携带两类口径不同的指标：
+      · 规模与变现（新增/DAU/流水/付费率/付费人数/ARPU/ARPPU）取「当日」日表；
+      · 留存（D1/D3/D7/D15/D30）取「该日新增队列」在 retention_cohorts 里的对应行，
+        即"这一天进来的用户，第 n 天还剩多少人"。
+    ARPU / ARPPU 在这里算好，页面不再做除法，避免两端口径漂移。
+    """
+    by_date = {r["date"]: r for r in daily}
+    window = [d for d in by_date if d <= today]
+    window = sorted(window)[-days:]
+
+    cur = conn.execute(
+        "SELECT cohort_date, day_n, rate FROM retention_cohorts "
+        "WHERE day_n IN (1, 3, 7, 15, 30)"
+    )
+    ret = {(r[0], r[1]): r[2] for r in cur}
+
+    WD = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    rows = []
+    for d in window:
+        m = by_date[d]
+        dau = m["dau"] or 0
+        pay_users = m["pay_users"] or 0
+        revenue = m["revenue"] or 0
+        row = {
+            "date": d,
+            "weekday": WD[dt.date.fromisoformat(d).weekday()],
+            "new_users": m["new_users"],
+            "dau": dau,
+            "revenue": round(revenue, 2),
+            "pay_rate": m["pay_rate"],
+            "pay_users": pay_users,
+            "arpu": round(revenue / dau, 2) if dau else None,
+            "arppu": round(revenue / pay_users, 2) if pay_users else None,
+        }
+        for n, key in ((1, "d1"), (3, "d3"), (7, "d7"), (15, "d15"), (30, "d30")):
+            v = ret.get((d, n))
+            row[key] = round(v, 4) if v is not None else None
+        rows.append(row)
+
+    return {
+        "days": len(rows),
+        "start": rows[0]["date"] if rows else today,
+        "end": rows[-1]["date"] if rows else today,
+        "rows": rows,
+    }
+
+
 def load_schedule(cfg):
     """排期数据：优先读模块③ 引擎产出的台账，缺失时回落到 config.json 的内嵌排期。"""
     if SCHED_PATH.exists():
@@ -363,8 +413,6 @@ def main():
     tiers = load_tiers(conn)
     suggest = load_suggest()
     demo = load_demo(conn, suggest)          # 静态版回放素材（取最近一次真实发布）
-    conn.close()
-
     if not daily:
         print("[ERROR] daily_metrics 没有数据，先运行生成器。")
         return 1
@@ -377,6 +425,9 @@ def main():
         today = data_start
     if today > data_end:
         today = data_end
+
+    recent = load_recent(conn, daily, today)  # 近 7 日明细（区块01b），依赖 today
+    conn.close()
 
     info = month_summary(daily, today, kpi_cfg)
 
@@ -418,6 +469,7 @@ def main():
         "sentiment": sentiment,
         "tiers": tiers,
         "daily": daily,
+        "daily_recent": recent,
     }
 
     out = Path(args.out)

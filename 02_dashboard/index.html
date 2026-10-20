@@ -571,6 +571,104 @@ h1{
   line-height:1.8;
 }
 
+/* ============ 区块01b · 近 7 日核心数据 ============ */
+.dt-wrap{
+  margin-top:14px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#fcfdff;
+  overflow:hidden;
+}
+.dt-scroll{overflow-x:auto;}
+.dt-table{
+  min-width:1050px;
+  padding:6px 16px 8px;
+}
+/* 13 列：日期 + 新增 / DAU / 流水 / 付费率 / 付费人数 / ARPU / ARPPU / 5 档留存 */
+.dt-row{
+  display:grid;
+  grid-template-columns:88px repeat(2,minmax(0,1fr)) repeat(5,minmax(0,1.06fr)) repeat(5,minmax(0,1fr));
+  align-items:center;
+  gap:0;
+  border-top:1px dashed var(--line);
+}
+.dt-row:first-child{border-top:none;}
+.dt-row.is-head{
+  color:var(--ink-3);
+  font-size:11.5px;
+  letter-spacing:.01em;
+  padding:2px 0 7px;
+  background:#fff;
+}
+.dt-row.is-body{
+  font-size:12.5px;
+  padding:8px 0;
+  transition:background .15s;
+}
+.dt-row.is-body:hover{background:var(--brand-soft);}
+.dt-row.is-today{background:#f7faff;}
+.dt-row.is-today:hover{background:var(--brand-soft);}
+
+.dt-c{
+  padding:0 7px;
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.dt-c:first-child{
+  text-align:left;
+  padding-left:0;
+}
+.dt-c.g-sep{border-left:1px solid #eef2f7;}
+
+/* 表头分组色：规模 / 变现 / 留存 */
+.dt-row.is-head .dt-c{font-weight:600;}
+.dt-row.is-head .g-m{color:#5b7ba3;}
+.dt-row.is-head .g-r{color:#8a6ea8;}
+
+.dt-date{
+  font-weight:600;
+  color:var(--ink-2);
+  display:flex;
+  align-items:baseline;
+  gap:6px;
+}
+.dt-date small{
+  font-weight:400;
+  color:var(--ink-3);
+  font-size:11.5px;
+}
+.dt-row.is-today .dt-date{color:var(--brand);}
+
+.dt-v{color:var(--ink);}
+.dt-v.dim{color:var(--ink-3);}
+.dt-v.mono{font-weight:650;}
+.dt-c .dim{color:#c2ccda;}
+
+/* 流水列：纯数字，不做条形对比 */
+.dt-rev{font-weight:650;}
+
+.dt-foot{
+  margin:9px 2px 0;
+  font-size:11.5px;
+  color:var(--ink-3);
+  display:flex;
+  gap:16px;
+  flex-wrap:wrap;
+}
+.dt-foot i{
+  font-style:normal;
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+}
+.dt-foot i::before{
+  content:"";
+  width:9px;height:9px;
+  border-radius:3px;
+  background:#e6eef9;
+}
+
 /* ============ 区块02 · 付费梯度结构 ============ */
 .chart-canvas-wide{
   max-width:none;
@@ -852,6 +950,24 @@ h1{
         <div class="tips-title">结论</div>
         <p class="tips-note" id="tips-note"></p>
       </aside>
+    </div>
+  </section>
+
+  <!-- ==================== 区块01b · 近 7 日核心数据 ==================== -->
+  <section class="block" id="block-daily">
+    <div class="block-head">
+      <h2>近 7 日核心数据</h2>
+      <p class="block-sub" id="daily-sub"></p>
+    </div>
+
+    <div class="dt-wrap">
+      <div class="dt-scroll">
+        <div class="dt-table" id="daily-table"></div>
+      </div>
+    </div>
+
+    <div class="dt-foot">
+      <i>留存为队列口径：该日新增用户在第 n 天仍活跃的比例</i>
     </div>
   </section>
 
@@ -1234,6 +1350,83 @@ h1{
         + '流水完成 <b class="good">' + pct(p.progressKpi) + '</b>，'
         + '领先 ' + Math.abs(p.diffPp).toFixed(2) + ' 个百分点，进度健康。';
     }
+  }
+
+  /* ---------- 渲染区块01b：近 7 日核心数据 ---------- */
+  function renderDaily() {
+    const box = document.getElementById('daily-table');
+    const sub = document.getElementById('daily-sub');
+    const R = D.daily_recent;
+    if (!box) return;
+    if (!R || !R.rows || !R.rows.length) {
+      box.innerHTML = '<p class="tips-empty">未取到近 7 日日数据，先运行 dashboard.bat 重建。</p>';
+      if (sub) sub.textContent = '';
+      return;
+    }
+    const rows = R.rows;
+    const sumRev = rows.reduce((a, r) => a + (r.revenue || 0), 0);
+    const sumPay = rows.reduce((a, r) => a + (r.pay_users || 0), 0);
+    const sumDau = rows.reduce((a, r) => a + (r.dau || 0), 0);
+    const avgDau = sumDau / rows.length;
+
+    sub.innerHTML = R.start + ' ~ ' + R.end + '（' + rows.length + ' 天）'
+      + '　|　累计流水 <b>' + money0(sumRev) + '</b>'
+      + '　|　日均 DAU <b>' + num(Math.round(avgDau), 0) + '</b>'
+      + '　|　加权付费率 <b>' + pct(sumPay / sumDau, 2) + '</b>'
+      + '　|　ARPU = 流水/DAU，ARPPU = 流水/付费人数';
+
+    /* 表头：规模 | 变现 | 留存 三组，组间留一条竖线 */
+    const HEAD = [
+      ['日期', '', ''],
+      ['新增用户数', 'g-s', '当日新注册用户数'],
+      ['DAU', 'g-s', '当日活跃用户数 = 非新增活跃 + 新增'],
+      ['当日流水', 'g-m g-sep', '当日充值流水（元）'],
+      ['付费率', 'g-m', '付费人数 / DAU'],
+      ['付费人数', 'g-m', '当日有付费行为的用户数'],
+      ['ARPU', 'g-m', '流水 / DAU，每活跃用户贡献收入'],
+      ['ARPPU', 'g-m', '流水 / 付费人数，每付费用户贡献收入'],
+      ['次留', 'g-r g-sep', '该日新增用户，第 1 天仍活跃的比例（队列口径）'],
+      ['3 留', 'g-r', '该日新增用户，第 3 天仍活跃的比例'],
+      ['7 留', 'g-r', '该日新增用户，第 7 天仍活跃的比例'],
+      ['15 留', 'g-r', '该日新增用户，第 15 天仍活跃的比例'],
+      ['30 留', 'g-r', '该日新增用户，第 30 天仍活跃的比例；虚拟数据集已预生成全周期，'
+        + '真实投放中未到观察期的队列此列为空']
+    ];
+
+    let h = '<div class="dt-row is-head">';
+    HEAD.forEach(function (c) {
+      h += '<div class="dt-c ' + c[1] + '"' + (c[2] ? ' title="' + c[2] + '"' : '') + '>' + c[0] + '</div>';
+    });
+    h += '</div>';
+
+    const N = v => (v === null || v === undefined ? '<span class="dim">—</span>' : v);
+    const moneyOr = v => (v === null || v === undefined ? N(null) : money(v));
+    const pctOr = v => (v === null || v === undefined ? N(null) : pct(v, 1));
+
+    rows.forEach(function (r) {
+      const isToday = r.date === R.end;
+      h += '<div class="dt-row is-body' + (isToday ? ' is-today' : '') + '">';
+
+      h += '<div class="dt-c"><span class="dt-date">' + r.date.slice(5)
+        + '<small>' + r.weekday + '</small></span></div>';
+      h += '<div class="dt-c dt-v">' + num(r.new_users, 0) + '</div>';
+      h += '<div class="dt-c dt-v">' + num(r.dau, 0) + '</div>';
+
+      h += '<div class="dt-c dt-v dt-rev g-sep">' + money0(r.revenue || 0) + '</div>';
+      h += '<div class="dt-c dt-v">' + pct(r.pay_rate, 2) + '</div>';
+      h += '<div class="dt-c dt-v">' + num(r.pay_users, 0) + '</div>';
+      h += '<div class="dt-c dt-v">' + moneyOr(r.arpu) + '</div>';
+      h += '<div class="dt-c dt-v">' + moneyOr(r.arppu) + '</div>';
+
+      ['d1', 'd3', 'd7', 'd15', 'd30'].forEach(function (k, i) {
+        h += '<div class="dt-c dt-v' + (i === 0 ? ' g-sep' : '') + '">'
+          + pctOr(r[k]) + '</div>';
+      });
+
+      h += '</div>';
+    });
+
+    box.innerHTML = h;
   }
 
   /* ---------- 渲染区块02：付费梯度结构 ---------- */
@@ -2599,6 +2792,7 @@ h1{
 
   /* ---------- 启动 ---------- */
   renderKpi();
+  renderDaily();
   renderTiers();
   renderSchedule();
   renderConsole();
