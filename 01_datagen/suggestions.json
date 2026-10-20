@@ -1,17 +1,17 @@
 {
   "_comment": "由 activity_engine.py 生成。kind=update 为配置改动，kind=enable 为未上线排期落地。已上线（有冻结期）的活动不进建议。",
-  "generated_at": "2026-10-17 12:00:00",
-  "today": "2026-10-17",
+  "generated_at": "2026-10-18 19:56:52",
+  "today": "2026-10-18",
   "month": "2026-10",
   "diag": {
-    "need_daily": 32655.52,
-    "gap_daily": 24529.31,
-    "gap_total": 457177.28,
-    "seg_struct": 17.826999618008006,
+    "need_daily": 34284.07,
+    "gap_daily": 23844.73,
+    "gap_total": 445692.92,
+    "seg_struct": 42.73547937538207,
     "seg_volume": 0.0,
-    "seg_rest": 82.17300038199198,
-    "l5_rate": 0.4448,
-    "struct_gap": 4372.84,
+    "seg_rest": 57.26452062461793,
+    "l5_rate": 0.3942,
+    "struct_gap": 10190.16,
     "volume_gap": 0
   },
   "rule_book": {

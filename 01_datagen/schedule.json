@@ -1,8 +1,8 @@
 {
   "_comment": "本文件由 03_activity_agent/activity_engine.py 生成，请勿手改。已定档（frozen=1）的排期不会再被改动。",
   "month": "2026-10",
-  "today": "2026-10-17",
-  "generated_at": "2026-10-17 12:00:00",
+  "today": "2026-10-18",
+  "generated_at": "2026-10-18 19:56:52",
   "lock_rule": "start_date <= today 的排期视为已上线，frozen=1，引擎只读不改",
   "stats": {
     "add": 0,

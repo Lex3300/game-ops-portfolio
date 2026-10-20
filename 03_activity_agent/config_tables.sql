@@ -9,7 +9,7 @@
 --   配置值 ← arsenal_seed.json（由看板区块04「一键发布」从 Excel 回写）
 -- 查某个活动的配置 → 看它那一段的 INSERT 语句，或打开库里对应的表。
 --
--- 活动数：27　种子版本：2026-10-17　配置时间：2026-10-17T12:00:00
+-- 活动数：27　种子版本：2026-10-17　配置时间：2026-10-18T19:56:52
 -- ==============================================================
 
 -- ------------------------------------------------------------------
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_gift_001 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_gift_001 (activity_id, price_tiers, reward_desc, limit_per_user, cycle, updated_at)
-  VALUES ('ACT-GIFT-001', '6/30/98', '首充双倍钻石', 1, '终身 1 次（可重置）', '2026-10-17T12:00:00');
+  VALUES ('ACT-GIFT-001', '6/30/98', '首充双倍钻石', 1, '终身 1 次（可重置）', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-GIFT-002 · 每日礼包轮换
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_gift_002 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_gift_002 (activity_id, price_tiers, reward_desc, limit_per_user, cycle, updated_at)
-  VALUES ('ACT-GIFT-002', '6/30/68', '每日轮换资源包', 1, '日', '2026-10-17T12:00:00');
+  VALUES ('ACT-GIFT-002', '6/30/68', '每日轮换资源包', 1, '日', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-GIFT-003 · 回归玩家专属礼包
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_gift_003 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_gift_003 (activity_id, price_tiers, reward_desc, limit_per_user, cycle, trigger_cond, updated_at)
-  VALUES ('ACT-GIFT-003', '1/6', '回归补给包', 1, '一次性', '连续 14 天未登录', '2026-10-17T12:00:00');
+  VALUES ('ACT-GIFT-003', '1/6', '回归补给包', 1, '一次性', '连续 14 天未登录', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-GIFT-004 · 新手 7 日礼包链
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_gift_004 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_gift_004 (activity_id, price_tiers, reward_desc, limit_per_user, cycle, updated_at)
-  VALUES ('ACT-GIFT-004', '6/30', '7 日逐日资源 + 进阶档', 7, '日', '2026-10-17T12:00:00');
+  VALUES ('ACT-GIFT-004', '6/30', '7 日逐日资源 + 进阶档', 7, '日', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-GIFT-005 · 限时礼包·节点特惠
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_gift_005 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_gift_005 (activity_id, price_tiers, reward_desc, limit_per_user, cycle, updated_at)
-  VALUES ('ACT-GIFT-005', '30/128', '节点限定资源包', 2, '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-GIFT-005', '30/128', '节点限定资源包', 2, '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-GIFT-006 · 终身限量礼包
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_gift_006 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_gift_006 (activity_id, price_tiers, reward_desc, limit_per_user, stock, cycle, updated_at)
-  VALUES ('ACT-GIFT-006', '328/648', '终身限量资源包', 1, 2000, '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-GIFT-006', '328/648', '终身限量资源包', 1, 2000, '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-GIFT-007 · 周/月礼包
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_gift_007 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_gift_007 (activity_id, price_tiers, reward_desc, limit_per_user, cycle, updated_at)
-  VALUES ('ACT-GIFT-007', '30/98', '周档资源合集', 1, '周', '2026-10-17T12:00:00');
+  VALUES ('ACT-GIFT-007', '30/98', '周档资源合集', 1, '周', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-BEN-001 · 周卡 / 月卡
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_ben_001 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_ben_001 (activity_id, price_tiers, reward_desc, cycle, updated_at)
-  VALUES ('ACT-BEN-001', '30/128', '每日登录领 1 份', '日', '2026-10-17T12:00:00');
+  VALUES ('ACT-BEN-001', '30/128', '每日登录领 1 份', '日', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-BEN-002 · 月度通行证
@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_ben_002 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_ben_002 (activity_id, price_tiers, reward_desc, cycle, updated_at)
-  VALUES ('ACT-BEN-002', '68', '免费轨 + 付费轨', '月', '2026-10-17T12:00:00');
+  VALUES ('ACT-BEN-002', '68', '免费轨 + 付费轨', '月', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-BEN-003 · 等级基金
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_ben_003 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_ben_003 (activity_id, price_tiers, reward_desc, cycle, updated_at)
-  VALUES ('ACT-BEN-003', '98/198', '按等级返还资源', '赛季', '2026-10-17T12:00:00');
+  VALUES ('ACT-BEN-003', '98/198', '按等级返还资源', '赛季', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-BEN-004 · 赛季通行证
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_ben_004 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_ben_004 (activity_id, price_tiers, reward_desc, cycle, updated_at)
-  VALUES ('ACT-BEN-004', '68/128', '赛季任务积分兑换', '赛季', '2026-10-17T12:00:00');
+  VALUES ('ACT-BEN-004', '68/128', '赛季任务积分兑换', '赛季', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-DRAW-001 · 定向抽奖
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_draw_001 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_draw_001 (activity_id, price_tiers, reward_desc, pity_times, cycle, updated_at)
-  VALUES ('ACT-DRAW-001', '6/68', '自选大奖池 + 保底', 60, '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-DRAW-001', '6/68', '自选大奖池 + 保底', 60, '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-DRAW-002 · 保底抽奖
@@ -247,7 +247,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_draw_002 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_draw_002 (activity_id, price_tiers, reward_desc, pity_times, cycle, updated_at)
-  VALUES ('ACT-DRAW-002', '6/30', '累计 N 次必得大奖（抽数进度可视化，保底跨期继承）', 45, '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-DRAW-002', '6/30', '累计 N 次必得大奖（抽数进度可视化，保底跨期继承）', 45, '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-DRAW-003 · 免费抽奖券/活跃抽奖
@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_draw_003 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_draw_003 (activity_id, reward_desc, cycle, updated_at)
-  VALUES ('ACT-DRAW-003', '每日活跃送 1 抽', '日', '2026-10-17T12:00:00');
+  VALUES ('ACT-DRAW-003', '每日活跃送 1 抽', '日', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-DRAW-004 · 存量抽奖
@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_draw_004 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_draw_004 (activity_id, price_tiers, reward_desc, stock, cycle, updated_at)
-  VALUES ('ACT-DRAW-004', '68/328/648', '固定奖池，抽一少一', 3000, '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-DRAW-004', '68/328/648', '固定奖池，抽一少一', 3000, '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-TASK-001 · 累登签到
@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_task_001 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_task_001 (activity_id, reward_desc, cycle, updated_at)
-  VALUES ('ACT-TASK-001', '7 日循环签到奖励', '日', '2026-10-17T12:00:00');
+  VALUES ('ACT-TASK-001', '7 日循环签到奖励', '日', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-TASK-002 · 累充任务
@@ -317,7 +317,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_task_002 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_task_002 (activity_id, price_tiers, reward_desc, limit_per_user, cycle, updated_at)
-  VALUES ('ACT-TASK-002', '6/30/128/328/648/1288', '五档累计充值奖励', 6, '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-TASK-002', '6/30/128/328/648/1288', '五档累计充值奖励', 6, '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-TASK-003 · 每日任务
@@ -334,7 +334,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_task_003 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_task_003 (activity_id, reward_desc, cycle, updated_at)
-  VALUES ('ACT-TASK-003', '活跃度宝箱', '日', '2026-10-17T12:00:00');
+  VALUES ('ACT-TASK-003', '活跃度宝箱', '日', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-TASK-004 · 活跃宝箱
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_task_004 (
     updated_at     TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_task_004 (activity_id, reward_desc, cycle, updated_at)
-  VALUES ('ACT-TASK-004', '30/60/120 分钟三档宝箱', '日', '2026-10-17T12:00:00');
+  VALUES ('ACT-TASK-004', '30/60/120 分钟三档宝箱', '日', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-RANK-001 · 开服竞技排行榜
@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_rank_001 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_rank_001 (activity_id, rank_metric, reward_desc, cycle, updated_at)
-  VALUES ('ACT-RANK-001', '战力排名', '稀有称号 + 资源', '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-RANK-001', '战力排名', '稀有称号 + 资源', '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-RANK-002 · 消费排行榜
@@ -383,7 +383,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_rank_002 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_rank_002 (activity_id, rank_metric, reward_desc, cycle, updated_at)
-  VALUES ('ACT-RANK-002', '累计充值额', '榜单排名奖励', '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-RANK-002', '累计充值额', '榜单排名奖励', '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-SPEC-001 · 老带新邀请返利
@@ -400,7 +400,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_spec_001 (
     updated_at   TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_spec_001 (activity_id, reward_desc, trigger_cond, cycle, updated_at)
-  VALUES ('ACT-SPEC-001', '邀请礼包 + 返利', '被邀请人达 10 级', '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-SPEC-001', '邀请礼包 + 返利', '被邀请人达 10 级', '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-SPEC-002 · 周末限时收益 UP
@@ -417,7 +417,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_spec_002 (
     updated_at   TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_spec_002 (activity_id, reward_desc, multiplier, cycle, updated_at)
-  VALUES ('ACT-SPEC-002', '双倍掉落 / 双倍经验', 2.0, '周', '2026-10-17T12:00:00');
+  VALUES ('ACT-SPEC-002', '双倍掉落 / 双倍经验', 2.0, '周', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-SPEC-003 · 限时双倍掉落
@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_spec_003 (
     updated_at   TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_spec_003 (activity_id, reward_desc, multiplier, cycle, updated_at)
-  VALUES ('ACT-SPEC-003', '指定副本掉落翻倍', 2.0, '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-SPEC-003', '指定副本掉落翻倍', 2.0, '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-SPEC-004 · 节日/联动活动
@@ -451,7 +451,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_spec_004 (
     updated_at   TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_spec_004 (activity_id, reward_desc, cycle, updated_at)
-  VALUES ('ACT-SPEC-004', '主题限定内容', '一次性', '2026-10-17T12:00:00');
+  VALUES ('ACT-SPEC-004', '主题限定内容', '一次性', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-SHOP-001 · 常驻商品售卖
@@ -467,7 +467,7 @@ CREATE TABLE IF NOT EXISTS cfg_act_shop_001 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_shop_001 (activity_id, price_tiers, cycle, updated_at)
-  VALUES ('ACT-SHOP-001', '按道具定价', '常驻', '2026-10-17T12:00:00');
+  VALUES ('ACT-SHOP-001', '按道具定价', '常驻', '2026-10-18T19:56:52');
 
 -- ------------------------------------------------------------------
 -- ACT-SHOP-002 · 积分兑换
@@ -483,4 +483,4 @@ CREATE TABLE IF NOT EXISTS cfg_act_shop_002 (
     updated_at  TEXT      -- 最近一次由引擎写入的时间
 );
 INSERT OR REPLACE INTO cfg_act_shop_002 (activity_id, reward_desc, cycle, updated_at)
-  VALUES ('ACT-SHOP-002', '积分兑换道具池', '周', '2026-10-17T12:00:00');
+  VALUES ('ACT-SHOP-002', '积分兑换道具池', '周', '2026-10-18T19:56:52');
