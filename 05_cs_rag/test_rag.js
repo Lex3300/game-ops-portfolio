@@ -49,7 +49,42 @@ const CASES = [
   { q: '用外挂会被封号吗', expect: 'hit', hint: '封号' },
   { q: '怎么切换账号', expect: 'hit', hint: '切换账号' },
 
-  { q: '能退款吗', expect: 'miss' },
+  // 扩充后新增内容的对位校验（2026-10-19）
+  { q: '公测会删档吗', expect: 'hit', hint: '删档' },
+  { q: '苹果和安卓能一起玩吗', expect: 'hit', hint: '互通' },
+  { q: '转生后等级会清零吗', expect: 'hit', hint: '重置到 1 级' },
+  { q: '强化失败装备会碎吗', expect: 'hit', hint: '不会碎' },
+  { q: '红装从哪里掉', expect: 'hit', hint: '深渊挑战' },
+  { q: '未成年一天能玩多久', expect: 'hit', hint: '未成年' },
+  { q: '微信代充安全吗', expect: 'hit', hint: '代充' },
+  { q: '小孩误充值能退吗', expect: 'hit', hint: '监护人' },
+  { q: '线下交易会被封号吗', expect: 'hit', hint: '线下交易' },
+  { q: '新手第一天做什么', expect: 'hit', hint: '主线' },
+  { q: '官方会要我密码吗', expect: 'hit', hint: '绝对不会' },
+  { q: '怎么识别钓鱼网站', expect: 'hit', hint: '域名' },
+  { q: '时装加属性吗', expect: 'hit', hint: '属性时装' },
+  { q: '战力压制是什么', expect: 'hit', hint: '战力差' },
+  { q: '账号怎么注销', expect: 'hit', hint: '冷静期' },
+  { q: '月卡和终身卡买哪个划算', expect: 'hit', hint: '终身卡' },
+  { q: '装备先强化哪个部位', expect: 'hit', hint: '武器' },
+  { q: '攻城战赢了有什么奖励', expect: 'hit', hint: '城主' },
+
+  { q: '能退款吗', expect: 'hit', hint: '退款' },
+
+  // 价格意图：同一个问题的七种问法，全部要落到「游戏是免费的吗」
+  // （改造前只有「免费」这一种问法可用，其余五种兜底、一种误命中）
+  { q: '游戏收费吗', expect: 'hit', hint: '免费' },
+  { q: '游戏要钱吗', expect: 'hit', hint: '免费' },
+  { q: '下载要钱吗', expect: 'hit', hint: '免费' },
+  { q: '玩这个游戏花钱吗', expect: 'hit', hint: '免费' },
+  { q: '需要付费吗', expect: 'hit', hint: '免费' },
+  { q: '游戏收不收费', expect: 'hit', hint: '免费' },
+  { q: '白嫖能玩吗', expect: 'hit', hint: '免费' },
+
+  // 排序与归一改造的回归位（覆盖率降为闸门、词频截断、剥离后长词归一）
+  { q: '月卡多少钱', expect: 'hit', hint: '售价' },
+  { q: '要买月卡吗', expect: 'hit', hint: '月卡' },
+  { q: '装备怎么升级', expect: 'hit', hint: '强化' },
   { q: '游戏官网是多少', expect: 'miss' },
   { q: '你们公司在哪里', expect: 'miss' },
   { q: '今天天气怎么样', expect: 'miss' },
